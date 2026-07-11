@@ -734,6 +734,7 @@ export default function MarketPulse() {
   const [wireLoading, setWireLoading] = useState(false);
   const [wireFailed, setWireFailed] = useState([]);
   const [autoWire, setAutoWire] = useState(false);
+  const [buzz, setBuzz] = useState(null);
   const [picks, setPicks] = useState([]);
   const [picksNote, setPicksNote] = useState("");
   const [picksRun, setPicksRun] = useState(null);
@@ -797,6 +798,7 @@ export default function MarketPulse() {
     if (tab !== "wire" || !autoWire) return;
     const id = setInterval(() => {
       loadWire();
+      loadBuzz();
     }, 120000);
     return () => clearInterval(id);
   }, [tab, autoWire]);
@@ -954,6 +956,13 @@ export default function MarketPulse() {
     }
   }
 
+  async function loadBuzz() {
+    try {
+      const r = await fetch("/api/buzz");
+      setBuzz(await r.json());
+    } catch (e) {}
+  }
+
   async function runPicks() {
     setPicksLoading(true);
     setError("");
@@ -1072,7 +1081,7 @@ export default function MarketPulse() {
               Daily brief
             </button>
             <button
-              onClick={() => { setTab("wire"); if (wire.length === 0 && !wireLoading) loadWire(); }}
+              onClick={() => { setTab("wire"); if (wire.length === 0 && !wireLoading) { loadWire(); loadBuzz(); } }}
               className="px-3 py-1.5 rounded-md text-sm"
               style={{ background: tab === "wire" ? "rgba(123,201,143,0.14)" : "transparent", border: `1px solid ${tab === "wire" ? C.green : C.line}`, color: tab === "wire" ? C.green : C.dim, cursor: "pointer" }}
             >
@@ -1487,7 +1496,7 @@ export default function MarketPulse() {
 
             <div className="mb-4 flex items-center gap-2 flex-wrap">
               <button
-                onClick={loadWire}
+                onClick={() => { loadWire(); loadBuzz(); }}
                 disabled={wireLoading}
                 className="text-xs px-2.5 py-1.5 rounded"
                 style={{ border: `1px solid ${C.green}`, color: C.green, background: "transparent", cursor: "pointer" }}
@@ -1560,6 +1569,57 @@ export default function MarketPulse() {
               <div className="rounded-lg p-5 mb-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
                 <p className="text-sm" style={{ color: C.text }}>{picksNote}</p>
               </div>
+            )}
+
+            {buzz && (buzz.trending || []).length > 0 && (
+              <section className="mb-5">
+                <p className="text-xs mb-2" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace" }}>SOCIAL BUZZ, TRENDING RIGHT NOW</p>
+                <div className="flex flex-wrap gap-2">
+                  {buzz.trending.map((t, i) => (
+                    <span key={i} title={t.name}>
+                      <TickerChip company={{ ticker: t.ticker, name: t.name }} starred={watch.some((w) => w.ticker === t.ticker)} onToggle={toggleWatch} />
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: C.dim }}>
+                  The tickers retail traders are talking about most on Stocktwits this minute. Buzz is attention, not truth, and crowds are often late or wrong. Star one to cross check it against the wire and the live watcher.
+                </p>
+              </section>
+            )}
+
+            {buzz && (buzz.earnings || []).length > 0 && (() => {
+              const mine = buzz.earnings.filter((e) => watch.some((w) => w.ticker === e.ticker));
+              const hourLabel = { bmo: "before the open", amc: "after the close", dmh: "during market hours" };
+              return (
+                <section className="mb-5">
+                  <p className="text-xs mb-2" style={{ color: C.soon, fontFamily: "'IBM Plex Mono', monospace" }}>EARNINGS IN THE NEXT TWO WEEKS</p>
+                  {mine.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {mine.map((e, i) => (
+                        <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-md flex-wrap" style={{ background: C.panelSoft, border: `1px solid ${C.soon}` }}>
+                          <TickerChip company={{ ticker: e.ticker, name: e.ticker }} starred={true} onToggle={toggleWatch} />
+                          <span className="text-sm" style={{ color: C.text }}>
+                            reports {e.date}{hourLabel[e.hour] ? `, ${hourLabel[e.hour]}` : ""}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="text-xs mt-1" style={{ color: C.dim }}>
+                        Earnings are the most common scheduled catalyst. Expect bigger moves around these dates.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm rounded-md px-3 py-2" style={{ background: C.panelSoft, border: `1px solid ${C.line}`, color: C.dim }}>
+                      None of your starred tickers report in the next two weeks. {buzz.earnings.length} companies do. Star tickers from the wire or the buzz row and their earnings dates appear here automatically.
+                    </p>
+                  )}
+                </section>
+              );
+            })()}
+
+            {buzz && (buzz.failed || []).length > 0 && (
+              <p className="text-xs mb-3" style={{ color: C.dim }}>
+                Buzz sources that did not answer this time: {buzz.failed.join(", ")}.
+              </p>
             )}
 
             <section>
