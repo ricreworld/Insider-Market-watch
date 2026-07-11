@@ -11,7 +11,10 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: "ANTHROPIC_API_KEY is not set on the server" });
+    res.status(500).json({
+      error:
+        "AI scans need an Anthropic API key on the server, which is a paid service. The Live wire tab, watchlist, and live watcher all work without it.",
+    });
     return;
   }
 
