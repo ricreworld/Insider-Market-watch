@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { storage } from "./storage";
 
 const C = {
   bg: "#0B1220",
@@ -189,15 +190,12 @@ function extractJson(text) {
 async function callClaude(prompt, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      // The Anthropic key lives on the server. The browser only sends
+      // the prompt to our own /api/scan route, which forwards it.
+      const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: prompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
+        body: JSON.stringify({ prompt }),
       });
       const data = await response.json();
       const text = (data.content || [])
@@ -373,8 +371,10 @@ const PRICE_MOVE_PCT = 1.5;
 const VOL_SPIKE_X = 4;
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 
-// Ricardo's key candidates, pasted as one string; the app auto-tests both on connect
-const DEFAULT_KEYS = ["d93ak71r01qjqfqj2cag", "d93ak71r01qjqfqj2cb0"];
+// The Finnhub key comes from the environment now, never hardcoded.
+// It is fine for this key to reach the browser because the WebSocket
+// connects directly from the page, but it must not live in the repo.
+const DEFAULT_KEYS = [import.meta.env.VITE_FINNHUB_KEY].filter(Boolean);
 
 function Watcher({ watch, onExplain, explaining }) {
   const [key, setKey] = useState("");
@@ -389,10 +389,10 @@ function Watcher({ watch, onExplain, explaining }) {
   useEffect(() => {
     (async () => {
       try {
-        const k = await window.storage.get("pulse-finnhub-key");
-        setKey(k && k.value ? k.value : DEFAULT_KEYS[0]);
+        const k = await storage.get("pulse-finnhub-key");
+        setKey(k && k.value ? k.value : DEFAULT_KEYS[0] || "");
       } catch (e) {
-        setKey(DEFAULT_KEYS[0]);
+        setKey(DEFAULT_KEYS[0] || "");
       }
     })();
     return () => { if (wsRef.current) wsRef.current.close(); };
@@ -400,7 +400,7 @@ function Watcher({ watch, onExplain, explaining }) {
 
   async function saveKey(v) {
     setKey(v);
-    try { await window.storage.set("pulse-finnhub-key", v); } catch (e) {}
+    try { await storage.set("pulse-finnhub-key", v); } catch (e) {}
   }
 
   function handleTrades(trades) {
@@ -530,7 +530,7 @@ function Watcher({ watch, onExplain, explaining }) {
             style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}
           />
           <p className="text-xs mt-2 leading-relaxed" style={{ color: C.dim }}>
-            Your key is already loaded. Just hit Start. If the connection fails, the app auto-tries your backup key before giving up. Works during US market hours. {watch.length === 0 ? "Star at least one ticker first." : `Watching ${watch.length} ticker${watch.length > 1 ? "s" : ""} once started.`}
+            {key ? "Your key is loaded. Just hit Start." : "Paste your free Finnhub key from finnhub.io. It stays in your browser."} Works during US market hours. {watch.length === 0 ? "Star at least one ticker first." : `Watching ${watch.length} ticker${watch.length > 1 ? "s" : ""} once started.`}
           </p>
         </div>
       )}
@@ -592,11 +592,11 @@ export default function MarketPulse() {
   useEffect(() => {
     (async () => {
       try {
-        const w = await window.storage.get("pulse-watchlist");
+        const w = await storage.get("pulse-watchlist");
         if (w) setWatch(JSON.parse(w.value));
       } catch (e) {}
       try {
-        const s = await window.storage.get("pulse-last-scan");
+        const s = await storage.get("pulse-last-scan");
         if (s) {
           const parsed = JSON.parse(s.value);
           setEvents(parsed.events || []);
@@ -606,7 +606,7 @@ export default function MarketPulse() {
         }
       } catch (e) {}
       try {
-        const d = await window.storage.get("pulse-diamonds");
+        const d = await storage.get("pulse-diamonds");
         if (d) {
           const parsed = JSON.parse(d.value);
           setDiamonds(parsed.candidates || []);
@@ -625,7 +625,7 @@ export default function MarketPulse() {
 
   async function saveWatch(next) {
     setWatch(next);
-    try { await window.storage.set("pulse-watchlist", JSON.stringify(next)); } catch (e) {}
+    try { await storage.set("pulse-watchlist", JSON.stringify(next)); } catch (e) {}
   }
 
   function toggleWatch(company) {
@@ -654,7 +654,7 @@ export default function MarketPulse() {
       setNote(result.note || "");
       setLastRun(at);
       try {
-        await window.storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
+        await storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
       } catch (e) {}
     } catch (e) {
       setError("The scan did not come back clean, even after an automatic retry. Hit Run fresh scan again.");
@@ -679,7 +679,7 @@ export default function MarketPulse() {
       setDiamondNote(result.note || "");
       setDiamondRun(at);
       try {
-        await window.storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
+        await storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
       } catch (e) {}
     } catch (e) {
       setError("The diamond hunt did not come back clean, even after a retry. Run it again.");
