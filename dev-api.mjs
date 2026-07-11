@@ -6,6 +6,7 @@
 import http from "node:http";
 import scanHandler from "./api/scan.js";
 import wireHandler from "./api/wire.js";
+import buzzHandler from "./api/buzz.js";
 
 const PORT = 3001;
 
@@ -23,6 +24,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === "/api/wire") {
     await wireHandler(req, res);
+    return;
+  }
+
+  if (req.url === "/api/buzz") {
+    await buzzHandler(req, res);
     return;
   }
 
