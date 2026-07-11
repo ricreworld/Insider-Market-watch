@@ -67,6 +67,15 @@ const PRESSURE = {
   unclear: { label: "Pressure unclear", color: "#8B93A7", mark: "→" },
 };
 
+// Labels and colors for the history log entries.
+const HIST = {
+  scan: { label: "Event scan", color: "#F5C664" },
+  diamonds: { label: "Diamond hunt", color: "#B08FE8" },
+  brief: { label: "Daily brief", color: "#5FB2E8" },
+  movers: { label: "Wire movers", color: "#7BC98F" },
+  puts: { label: "Put pressure", color: "#E06C5F" },
+};
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -517,6 +526,9 @@ function Watcher({ watch, onExplain, explaining }) {
   const [status, setStatus] = useState("off");
   const [alerts, setAlerts] = useState([]);
   const [prices, setPrices] = useState({});
+  const [notif, setNotif] = useState(
+    typeof Notification !== "undefined" && Notification.permission === "granted" ? "on" : "off"
+  );
   const wsRef = useRef(null);
   const bufRef = useRef({});
   const lastAlertRef = useRef({});
@@ -578,6 +590,13 @@ function Watcher({ watch, onExplain, explaining }) {
         { sym, desc, at: new Date().toLocaleTimeString(), dir: pct >= 0 ? "up" : "down" },
         ...a.slice(0, 9),
       ]);
+      // System notification so alerts reach you even when this tab is
+      // in the background. Works while the page stays open somewhere.
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try {
+          new Notification(`${sym} ${desc}`, { body: "Market Pulse live watcher. Open the app and hit Explain this move." });
+        } catch (e) {}
+      }
     }
   }
 
@@ -634,6 +653,18 @@ function Watcher({ watch, onExplain, explaining }) {
           {status === "connecting" && <span style={{ color: C.gold }}> connecting...</span>}
           {status === "error" && <span style={{ color: C.red }}> connection failed, check your key</span>}
         </p>
+        {typeof Notification !== "undefined" && notif !== "on" && (
+          <button
+            onClick={() => {
+              Notification.requestPermission().then((p) => setNotif(p === "granted" ? "on" : "denied"));
+            }}
+            className="text-xs px-2.5 py-1 rounded"
+            style={{ border: `1px solid ${notif === "denied" ? C.line : C.gold}`, color: notif === "denied" ? C.dim : C.gold, background: "transparent", cursor: "pointer" }}
+            title="Get a system notification when a starred stock moves hard, even with this tab in the background"
+          >
+            {notif === "denied" ? "Notifications blocked in browser settings" : "Turn on alert notifications"}
+          </button>
+        )}
         {status === "live" ? (
           <button onClick={disconnect} className="text-xs px-2.5 py-1 rounded" style={{ border: `1px solid ${C.line}`, color: C.dim, background: "transparent", cursor: "pointer" }}>
             Stop watching
@@ -739,6 +770,12 @@ export default function MarketPulse() {
   const [picksNote, setPicksNote] = useState("");
   const [picksRun, setPicksRun] = useState(null);
   const [picksLoading, setPicksLoading] = useState(false);
+  const [puts, setPuts] = useState(null);
+  const [putsAt, setPutsAt] = useState(null);
+  const [putsLoading, setPutsLoading] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [autoBrief, setAutoBrief] = useState("off");
+  const [autoBriefPending, setAutoBriefPending] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -782,8 +819,38 @@ export default function MarketPulse() {
           setPicksRun(parsed.at || null);
         }
       } catch (e) {}
+      try {
+        const p2 = await storage.get("pulse-puts");
+        if (p2) {
+          const parsed = JSON.parse(p2.value);
+          setPuts(parsed.data || null);
+          setPutsAt(parsed.at || null);
+        }
+      } catch (e) {}
+      try {
+        const h = await storage.get("pulse-history");
+        if (h) setHistory(JSON.parse(h.value));
+      } catch (e) {}
+      try {
+        const a = await storage.get("pulse-auto-brief");
+        const v = a && a.value === "on" ? "on" : "off";
+        setAutoBrief(v);
+        if (v === "on") {
+          const d = await storage.get("pulse-brief-day");
+          if (!d || d.value !== new Date().toDateString()) setAutoBriefPending(true);
+        }
+      } catch (e) {}
     })();
   }, []);
+
+  // Auto brief: when enabled, run the morning brief once on the first
+  // open of each day. Fired via a pending flag so the watchlist has
+  // loaded before the brief runs.
+  useEffect(() => {
+    if (!autoBriefPending) return;
+    setAutoBriefPending(false);
+    runBrief();
+  }, [autoBriefPending]);
 
   useEffect(() => {
     if (!loading && !diamondLoading && !briefLoading && !picksLoading) return;
@@ -836,6 +903,10 @@ export default function MarketPulse() {
       try {
         await storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
       } catch (e) {}
+      addHistory("scan", (result.events || []).map((ev) => {
+        const tk = (ev.companies || []).map((c) => c.ticker).filter((t) => t && t !== "?").join(" ");
+        return `${ev.headline}${tk ? ` [${tk}]` : ""}`;
+      }));
     } catch (e) {
       setError(e.fatal ? e.message : "The scan did not come back clean, even after an automatic retry. Hit Run fresh scan again.");
     }
@@ -861,6 +932,7 @@ export default function MarketPulse() {
       try {
         await storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
       } catch (e) {}
+      addHistory("diamonds", sorted.map((c) => `${c.ticker} ${c.price}: ${c.catalyst} (${c.date})`));
     } catch (e) {
       setError(e.fatal ? e.message : "The diamond hunt did not come back clean, even after a retry. Run it again.");
     }
@@ -930,7 +1002,12 @@ export default function MarketPulse() {
       setBriefRun(at);
       try {
         await storage.set("pulse-daily-brief", JSON.stringify({ data: result, at }));
+        await storage.set("pulse-brief-day", new Date().toDateString());
       } catch (e) {}
+      addHistory("brief", [
+        result.market && result.market.summary,
+        ...(result.themes || []).map((t) => t.theme),
+      ]);
     } catch (e) {
       setError(e.fatal ? e.message : "The morning brief did not come back clean, even after a retry. Run it again.");
     }
@@ -963,6 +1040,43 @@ export default function MarketPulse() {
     } catch (e) {}
   }
 
+  // Everything the system finds gets remembered, so past days can be
+  // reviewed and the good signals separated from the noise over time.
+  function addHistory(type, lines) {
+    const entry = { type, at: new Date().toLocaleString(), lines: (lines || []).filter(Boolean).slice(0, 12) };
+    if (entry.lines.length === 0) return;
+    setHistory((h) => {
+      const next = [entry, ...h].slice(0, 40);
+      try { storage.set("pulse-history", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }
+
+  async function loadPuts() {
+    if (watch.length === 0) return;
+    setPutsLoading(true);
+    setError("");
+    try {
+      const syms = watch.map((w) => w.ticker).slice(0, 8).join(",");
+      const r = await fetch(`/api/puts?symbols=${encodeURIComponent(syms)}`);
+      const data = await r.json();
+      const at = new Date().toLocaleString();
+      setPuts(data);
+      setPutsAt(at);
+      try { await storage.set("pulse-puts", JSON.stringify({ data, at })); } catch (e) {}
+      addHistory("puts", (data.results || []).map((p) => `${p.ticker}: ${p.putVol.toLocaleString()} puts vs ${p.callVol.toLocaleString()} calls (${p.date})`));
+    } catch (e) {
+      setError("The put pressure check did not come back clean. Try it again.");
+    }
+    setPutsLoading(false);
+  }
+
+  async function toggleAutoBrief() {
+    const v = autoBrief === "on" ? "off" : "on";
+    setAutoBrief(v);
+    try { await storage.set("pulse-auto-brief", v); } catch (e) {}
+  }
+
   async function runPicks() {
     setPicksLoading(true);
     setError("");
@@ -986,6 +1100,7 @@ export default function MarketPulse() {
       try {
         await storage.set("pulse-wire-picks", JSON.stringify({ picks: enriched, note: result.note || "", at }));
       } catch (e) {}
+      addHistory("movers", enriched.map((p) => `${p.headline} [${(p.tickers || []).join(" ")}] pressure ${p.pressure}`));
     } catch (e) {
       setError(e.fatal ? e.message : "The wire triage did not come back clean, even after a retry. Run it again.");
     }
@@ -1046,7 +1161,7 @@ export default function MarketPulse() {
               >
                 {briefLoading ? "Reading the market..." : "Run morning brief"}
               </button>
-            ) : (
+            ) : tab === "wire" ? (
               <button
                 onClick={runPicks}
                 disabled={busy || wireLoading}
@@ -1055,7 +1170,7 @@ export default function MarketPulse() {
               >
                 {picksLoading ? "Triaging the wire..." : "Find the movers"}
               </button>
-            )}
+            ) : null}
           </div>
 
           <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -1087,6 +1202,13 @@ export default function MarketPulse() {
             >
               Live wire
             </button>
+            <button
+              onClick={() => setTab("history")}
+              className="px-3 py-1.5 rounded-md text-sm"
+              style={{ background: tab === "history" ? "rgba(139,147,167,0.14)" : "transparent", border: `1px solid ${tab === "history" ? C.text : C.line}`, color: tab === "history" ? C.text : C.dim, cursor: "pointer" }}
+            >
+              History
+            </button>
             {tab === "pulse" &&
               Object.entries(SCOPES).map(([k, v]) => (
                 <button
@@ -1098,7 +1220,7 @@ export default function MarketPulse() {
                   {v.label}
                 </button>
               ))}
-            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : picksRun) && (
+            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : tab === "wire" ? picksRun : null) && (
               <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
                 Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : picksRun}
               </span>
@@ -1411,6 +1533,16 @@ export default function MarketPulse() {
               <span style={{ color: C.soon }}>How this works: </span>
               one button builds your ten minute morning read. Market mood and what is driving it, the themes moving money today, fresh news on your starred tickers, and one honest discipline reminder. Run it once before the open.
             </div>
+            <div className="mb-4">
+              <button
+                onClick={toggleAutoBrief}
+                className="text-xs px-2.5 py-1.5 rounded"
+                style={{ border: `1px solid ${autoBrief === "on" ? C.soon : C.line}`, color: autoBrief === "on" ? C.soon : C.dim, background: autoBrief === "on" ? "rgba(95,178,232,0.08)" : "transparent", cursor: "pointer" }}
+                title="When on, the brief runs by itself the first time you open the app each day"
+              >
+                {autoBrief === "on" ? "Auto brief on: runs by itself on first open each day" : "Auto brief off: tap to run it automatically each morning"}
+              </button>
+            </div>
             {!briefLoading && !brief && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
                 <p className="text-base" style={{ color: C.text }}>No brief yet today.</p>
@@ -1616,6 +1748,54 @@ export default function MarketPulse() {
               );
             })()}
 
+            <section className="mb-5">
+              <div className="flex items-center gap-2 flex-wrap mb-2">
+                <p className="text-xs" style={{ color: C.red, fontFamily: "'IBM Plex Mono', monospace" }}>PUT PRESSURE, YESTERDAY'S OPTIONS BETS</p>
+                <button
+                  onClick={loadPuts}
+                  disabled={putsLoading || watch.length === 0}
+                  className="text-xs px-2.5 py-1 rounded"
+                  style={{ border: `1px solid ${watch.length > 0 ? C.red : C.line}`, color: watch.length > 0 ? C.red : C.dim, background: "transparent", cursor: watch.length > 0 ? "pointer" : "default" }}
+                >
+                  {putsLoading ? "Checking..." : watch.length === 0 ? "Star tickers first" : "Check my list"}
+                </button>
+                {putsAt && (
+                  <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Checked {putsAt}</span>
+                )}
+              </div>
+              {puts && (puts.results || []).length > 0 && (
+                <div className="space-y-1.5 mb-2">
+                  {puts.results.map((p, i) => {
+                    const noVol = p.putVol === 0 && p.callVol === 0;
+                    const heavy = p.ratio >= 1.5;
+                    const light = p.ratio <= 0.5;
+                    const tagColor = noVol ? C.dim : heavy ? C.red : light ? C.green : C.dim;
+                    const tagLabel = noVol ? "No options traded" : heavy ? "Heavy put betting" : light ? "Heavy call betting" : "Balanced";
+                    return (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-md flex-wrap" style={{ background: C.panelSoft, border: `1px solid ${heavy ? C.red : C.line}` }}>
+                        <TickerChip company={{ ticker: p.ticker, name: p.ticker }} starred={watch.some((w) => w.ticker === p.ticker)} onToggle={toggleWatch} />
+                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ border: `1px solid ${tagColor}`, color: tagColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+                          {tagLabel}
+                        </span>
+                        {!noVol && (
+                          <span className="text-sm" style={{ color: C.text }}>
+                            {p.putVol.toLocaleString()} puts vs {p.callVol.toLocaleString()} calls
+                            <span className="text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}> {"·"} {p.ratio.toFixed(1)} puts per call {"·"} {p.date}</span>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {puts && (puts.failed || []).length > 0 && (
+                <p className="text-xs mb-2" style={{ color: C.dim }}>Could not check: {puts.failed.join(", ")}.</p>
+              )}
+              <p className="text-xs leading-relaxed" style={{ color: C.dim }}>
+                Puts are bets a stock will fall, calls that it will rise. This totals yesterday's traded options on each starred ticker, up to eight, using your free data allowance. Far more puts than calls can mean someone expects a drop, or is just insuring a big position. One day behind by design, that is what free data allows.
+              </p>
+            </section>
+
             {buzz && (buzz.failed || []).length > 0 && (
               <p className="text-xs mb-3" style={{ color: C.dim }}>
                 Buzz sources that did not answer this time: {buzz.failed.join(", ")}.
@@ -1657,6 +1837,43 @@ export default function MarketPulse() {
                 </div>
               )}
             </section>
+          </>
+        )}
+
+        {tab === "history" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(233,230,219,0.04)", border: `1px solid ${C.line}`, color: C.dim }}>
+              <span style={{ color: C.text }}>How this works: </span>
+              every scan, hunt, brief, wire triage, and put check is remembered here, newest first, saved in this browser. Look back to learn which signals were early and which were noise. That review habit is what turns a scanner into a skill.
+            </div>
+            {history.length === 0 ? (
+              <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                <p className="text-base" style={{ color: C.text }}>Nothing remembered yet.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Run any scan and it will start showing up here automatically.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {history.map((h, i) => {
+                  const m = HIST[h.type] || { label: h.type, color: C.dim };
+                  return (
+                    <div key={i} className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+                      <div style={{ width: 4, background: m.color, flexShrink: 0 }} />
+                      <div className="flex-1 p-4">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ border: `1px solid ${m.color}`, color: m.color, fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {m.label}
+                          </span>
+                          <span className="text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>{h.at}</span>
+                        </div>
+                        {(h.lines || []).map((line, j) => (
+                          <p key={j} className="text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>{line}</p>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 
