@@ -331,7 +331,7 @@ async function callClaude(prompt, retries = 2, maxTokens = 1000) {
         const err = new Error(msg);
         // A missing server key will not fix itself; skip retries and
         // show the real explanation instead of a generic failure.
-        if (/anthropic api key/i.test(msg)) err.fatal = true;
+        if (/api key on the server/i.test(msg)) err.fatal = true;
         throw err;
       }
       const text = (data.content || [])
