@@ -11,7 +11,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  const finnhubKey = process.env.VITE_FINNHUB_KEY || process.env.FINNHUB_KEY || "";
+  // Finnhub keys are exactly 20 characters. The dashboard prints two
+  // keys stacked together, so pasted values often arrive glued or with
+  // stray whitespace. Clean whatever is stored and use the first key.
+  const rawKey = (process.env.VITE_FINNHUB_KEY || process.env.FINNHUB_KEY || "").replace(/\s+/g, "");
+  const finnhubKey = rawKey.slice(0, 20);
   const out = { trending: [], earnings: [], failed: [] };
 
   await Promise.allSettled([
