@@ -32,7 +32,7 @@ export default async function handler(req, res) {
       } finally {
         clearTimeout(timer);
       }
-    })().catch(() => out.failed.push("Stocktwits trending")),
+    })().catch((e) => out.failed.push(`Stocktwits trending (${(e && e.message) || "no answer"})`)),
 
     (async () => {
       if (!finnhubKey) {
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
       } finally {
         clearTimeout(timer);
       }
-    })().catch(() => out.failed.push("Finnhub earnings calendar")),
+    })().catch((e) => out.failed.push(`Finnhub earnings calendar (${(e && e.message) || "no answer"})`)),
   ]);
 
   res.status(200).json(out);

@@ -48,14 +48,20 @@ function tagText(block, tag) {
     .trim();
 }
 
-function decode(s) {
+function decodeOnce(s) {
   return s
-    .replace(/&amp;/g, "&")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+// Feeds often double-encode entities (&amp;amp;), so decode twice.
+function decode(s) {
+  return decodeOnce(decodeOnce(s));
 }
 
 function parseFeed(xml, feed) {
@@ -170,8 +176,21 @@ export default async function handler(req, res) {
   // Newest first. Items with no readable date sink to the bottom.
   items.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
 
+  // Feeds repeat items, and every Form 4 arrives twice on the EDGAR
+  // wire, once for the company and once for the person filing. Keep one
+  // copy of each title, and keep only the insider entries that mapped
+  // to a ticker, since the person-side duplicates never do.
+  const seen = new Set();
+  const cleaned = items.filter((it) => {
+    if (it.kind === "insider" && !it.ticker) return false;
+    const key = it.title.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   res.status(200).json({
-    items: items.slice(0, 80),
+    items: cleaned.slice(0, 80),
     failed,
     fetchedAt: new Date().toISOString(),
   });
