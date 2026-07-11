@@ -326,13 +326,21 @@ async function callClaude(prompt, retries = 2, maxTokens = 1000) {
         body: JSON.stringify({ prompt, maxTokens }),
       });
       const data = await response.json();
+      if (!response.ok || data.error) {
+        const msg = typeof data.error === "string" ? data.error : (data.error && data.error.message) || "scan failed";
+        const err = new Error(msg);
+        // A missing server key will not fix itself; skip retries and
+        // show the real explanation instead of a generic failure.
+        if (/anthropic api key/i.test(msg)) err.fatal = true;
+        throw err;
+      }
       const text = (data.content || [])
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("\n");
       return extractJson(text);
     } catch (e) {
-      if (attempt === retries) throw e;
+      if (e.fatal || attempt === retries) throw e;
     }
   }
 }
@@ -827,7 +835,7 @@ export default function MarketPulse() {
         await storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
       } catch (e) {}
     } catch (e) {
-      setError("The scan did not come back clean, even after an automatic retry. Hit Run fresh scan again.");
+      setError(e.fatal ? e.message : "The scan did not come back clean, even after an automatic retry. Hit Run fresh scan again.");
     }
     setLoading(false);
   }
@@ -852,7 +860,7 @@ export default function MarketPulse() {
         await storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
       } catch (e) {}
     } catch (e) {
-      setError("The diamond hunt did not come back clean, even after a retry. Run it again.");
+      setError(e.fatal ? e.message : "The diamond hunt did not come back clean, even after a retry. Run it again.");
     }
     setDiamondLoading(false);
   }
@@ -869,7 +877,7 @@ export default function MarketPulse() {
       setFocus({ ...item, events: result.events || [], note: result.note || "" });
     } catch (e) {
       setFocus(null);
-      setError(`The follow up check on ${item.ticker} did not come back clean. Try it again.`);
+      setError(e.fatal ? e.message : `The follow up check on ${item.ticker} did not come back clean. Try it again.`);
     }
     setFocusLoading(false);
   }
@@ -886,7 +894,7 @@ export default function MarketPulse() {
       setOwnedCheck({ ...item, supports: result.supports || [], weakens: result.weakens || [], note: result.note || "" });
     } catch (e) {
       setOwnedCheck(null);
-      setError(`The position check on ${item.ticker} did not come back clean. Try it again.`);
+      setError(e.fatal ? e.message : `The position check on ${item.ticker} did not come back clean. Try it again.`);
     }
     setOwnedLoading(false);
   }
@@ -903,7 +911,7 @@ export default function MarketPulse() {
       setDeep({ ...item, data: result });
     } catch (e) {
       setDeep(null);
-      setError(`The deep dive on ${item.ticker} did not come back clean. Try it again.`);
+      setError(e.fatal ? e.message : `The deep dive on ${item.ticker} did not come back clean. Try it again.`);
     }
     setDeepLoading(false);
   }
@@ -922,7 +930,7 @@ export default function MarketPulse() {
         await storage.set("pulse-daily-brief", JSON.stringify({ data: result, at }));
       } catch (e) {}
     } catch (e) {
-      setError("The morning brief did not come back clean, even after a retry. Run it again.");
+      setError(e.fatal ? e.message : "The morning brief did not come back clean, even after a retry. Run it again.");
     }
     setBriefLoading(false);
   }
@@ -970,7 +978,7 @@ export default function MarketPulse() {
         await storage.set("pulse-wire-picks", JSON.stringify({ picks: enriched, note: result.note || "", at }));
       } catch (e) {}
     } catch (e) {
-      setError("The wire triage did not come back clean, even after a retry. Run it again.");
+      setError(e.fatal ? e.message : "The wire triage did not come back clean, even after a retry. Run it again.");
     }
     setPicksLoading(false);
   }
@@ -1566,22 +1574,24 @@ export default function MarketPulse() {
                   {wire.slice(0, 40).map((it, i) => {
                     const k = KINDS[it.kind] || KINDS.news;
                     return (
-                      <a
+                      <div
                         key={i}
-                        href={it.link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block px-3 py-2 rounded-md"
-                        style={{ background: C.panelSoft, border: `1px solid ${C.line}`, textDecoration: "none" }}
+                        className="flex items-start gap-2 px-3 py-2 rounded-md flex-wrap"
+                        style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}
                       >
-                        <span className="text-xs px-1.5 py-0.5 rounded mr-2" style={{ color: k.color, border: `1px solid ${k.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: k.color, border: `1px solid ${k.color}`, fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" }}>
                           {k.label}
                         </span>
-                        <span className="text-sm" style={{ color: C.text }}>{it.title}</span>
-                        <span className="text-xs ml-2" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                          {it.source} {it.age ? `· ${it.age}` : ""}
-                        </span>
-                      </a>
+                        {it.ticker && (
+                          <TickerChip company={{ ticker: it.ticker, name: it.ticker }} starred={watch.some((w) => w.ticker === it.ticker)} onToggle={toggleWatch} />
+                        )}
+                        <a href={it.link} target="_blank" rel="noreferrer" className="flex-1 min-w-0" style={{ textDecoration: "none" }}>
+                          <span className="text-sm" style={{ color: C.text }}>{it.title}</span>
+                          <span className="text-xs ml-2" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {it.source} {it.age ? `· ${it.age}` : ""}
+                          </span>
+                        </a>
+                      </div>
                     );
                   })}
                 </div>

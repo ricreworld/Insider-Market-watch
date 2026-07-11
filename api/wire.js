@@ -77,6 +77,55 @@ function parseFeed(xml, feed) {
     .filter((it) => it.title);
 }
 
+// Free ticker intelligence, no AI needed. The SEC publishes a free file
+// mapping every registered company to its ticker. EDGAR feed titles
+// carry the company's CIK number, so filings can be tagged with their
+// ticker directly. Cached for a day between requests.
+let tickerMapPromise = null;
+let tickerMapAt = 0;
+
+async function getTickerMap(userAgent) {
+  const now = Date.now();
+  if (!tickerMapPromise || now - tickerMapAt > 24 * 60 * 60 * 1000) {
+    tickerMapAt = now;
+    tickerMapPromise = fetch("https://www.sec.gov/files/company_tickers.json", {
+      headers: { "User-Agent": userAgent, Accept: "application/json" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return null;
+        const byCik = {};
+        for (const k of Object.keys(data)) {
+          const row = data[k];
+          byCik[String(row.cik_str).padStart(10, "0")] = row.ticker;
+        }
+        return byCik;
+      })
+      .catch(() => null);
+  }
+  const map = await tickerMapPromise;
+  if (!map) tickerMapPromise = null; // failed, retry on the next request
+  return map;
+}
+
+// Press releases usually name their own ticker, like (NASDAQ: ABCD).
+const EXCHANGE_RE = /\(\s*(?:NYSE American|NYSE|NASDAQ|Nasdaq|AMEX|CBOE|OTCQB|OTCQX|OTCMKTS|OTC)\s*:\s*([A-Za-z.\-]{1,6})\s*\)/i;
+
+function tagTickers(items, cikMap) {
+  for (const it of items) {
+    const cik = (it.title.match(/\((\d{10})\)/) || [])[1];
+    if (cik && cikMap && cikMap[cik]) it.ticker = cikMap[cik];
+    if (!it.ticker) {
+      const m = it.title.match(EXCHANGE_RE);
+      if (m) it.ticker = m[1].toUpperCase();
+    }
+    // EDGAR titles carry CIK numbers and role labels; hide that noise.
+    it.title = it.title
+      .replace(/\s*\(\d{10}\)\s*(\((?:Filer|Issuer|Reporting|Reporting Owner|Subject)\))?/gi, "")
+      .trim();
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "GET only" });
@@ -115,6 +164,8 @@ export default async function handler(req, res) {
   const failed = results
     .map((r, i) => (r.status === "rejected" ? FEEDS[i].source : null))
     .filter(Boolean);
+
+  tagTickers(items, await getTickerMap(userAgent));
 
   // Newest first. Items with no readable date sink to the bottom.
   items.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
