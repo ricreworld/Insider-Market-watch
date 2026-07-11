@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { storage } from "./storage";
 
 const C = {
   bg: "#0B1220",
@@ -36,6 +37,22 @@ const CHECKS = {
   dilution: { label: "Dilution history", help: "Has the company avoided flooding the market with new shares" },
 };
 
+// Quality checklist for the deep dive, adapted from classic screener
+// questions: valuation, growth, financial health, moat, and sentiment.
+const DEEP_CHECKS = {
+  valuation: { label: "Valuation", help: "Is the price reasonable next to earnings, sales, and peers" },
+  growth: { label: "Growth", help: "Real growth prospects with evidence, not hope" },
+  health: { label: "Financial health", help: "Debt, cash flow, and margins in decent shape" },
+  moat: { label: "Competitive moat", help: "Something durable that keeps competitors out" },
+  sentiment: { label: "Sentiment", help: "How the market currently feels about it" },
+};
+
+const MOODS = {
+  risk_on: { label: "Risk on", color: "#7BC98F" },
+  risk_off: { label: "Risk off", color: "#E06C5F" },
+  mixed: { label: "Mixed", color: "#F5C664" },
+};
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -61,6 +78,14 @@ const DIAMOND_LINES = [
   "Looking for insider buying in SEC filings...",
   "Killing the trap stocks, keeping candidates...",
   "Building scorecards, almost done...",
+];
+
+const BRIEF_LINES = [
+  "Checking indexes and overnight macro...",
+  "Finding the themes driving today...",
+  "Sweeping fresh news on your starred tickers...",
+  "Separating fresh signals from priced in noise...",
+  "Writing your ten minute read, almost done...",
 ];
 
 // Master Brief v2, shared by every scan mode in the app
@@ -139,6 +164,50 @@ Respond with ONLY valid JSON, no markdown, no preamble. At most 3 items per buck
 {"supports":[{"signal":"what happened","why":"why it supports the case","source":"publication","age":"how recent"}],"weakens":[{"signal":"what happened","why":"why it weakens the case","source":"publication","age":"how recent"}],"note":"if nothing meaningful either way, say so plainly, else empty string"}`;
 }
 
+// Mode five, deep dive. One structured report per ticker that fuses a
+// fundamentals analyst, a quality screener checklist, a technical chart
+// read, and a news impact review into a single pass. Analysis and
+// scenarios only, never predictions or advice.
+function deepPrompt(name, ticker, dateStr) {
+  return `${BRIEF}
+
+Mode five, deep dive. Today is ${dateStr}. Build one structured research report on ${name} (${ticker}) combining four angles: fundamentals, a quality checklist, a technical read, and news impact.
+
+Search the web for: what the company does and how it makes money, financial health and key ratios, competitive position, recent price action with support and resistance and volume behavior, and the latest news with short and long term implications.
+
+STRICT RULES:
+1. Only report what you actually found with named sources. Never invent numbers or ratios.
+2. Checklist items are pass, fail, or unknown. Never mark pass without evidence. Honest unknowns.
+3. The technical read describes likely scenarios, never predictions or price targets.
+4. News impact is balanced, short term and long term, no buy or sell language.
+
+Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 20 words.
+
+{"snapshot":{"what":"what the company does, plain language","model":"how it actually makes money","edge":"its competitive edge, or the lack of one","health":"financial health in plain words"},"checklist":{"valuation":"pass|fail|unknown","growth":"pass|fail|unknown","health":"pass|fail|unknown","moat":"pass|fail|unknown","sentiment":"pass|fail|unknown"},"technicals":{"trend":"up|down|sideways","levels":"key support and resistance in plain words","volume":"volume behavior lately","read":"likely scenarios, not predictions"},"news":[{"headline":"plain headline","shortTerm":"possible short term effect","longTerm":"possible long term effect","source":"publication","age":"how recent"}],"biggestRisk":"the single biggest risk in one line","confidence":"low|medium|high"}`;
+}
+
+// Mode six, daily brief. The ten minute morning routine as one button:
+// market mood, driving themes, watchlist news, and a discipline check.
+function briefPrompt(dateStr, tickers) {
+  const wl = tickers.length
+    ? `My starred watchlist: ${tickers.join(", ")}.`
+    : "I have no starred tickers yet, so skip the watchlist section.";
+  return `${BRIEF}
+
+Mode six, daily brief. Today is ${dateStr}. ${wl}
+
+Build my ten minute morning read in one pass. Search the web for: how US indexes or index futures and any major overnight macro moved and why, the two or three themes actually driving today, and any fresh news touching my watchlist tickers specifically.
+
+STRICT RULES:
+1. Only what you actually found with named sources. Never present recycled news as fresh.
+2. If a watchlist ticker has no real fresh news, leave it out. Never force an item.
+3. The discipline line is one honest observation about concentration or risk in the watchlist mix, never advice.
+
+Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 18 words.
+
+{"market":{"mood":"risk_on|risk_off|mixed","summary":"the market this morning in one plain sentence","drivers":["driver one","driver two"]},"themes":[{"theme":"what is moving","why":"the real mechanism","tickers":["TICK"]}],"watchlist":[{"ticker":"TICK","item":"what happened","why":"real mechanism","source":"publication","age":"how recent"}],"discipline":"one honest reminder about the watchlist mix, no advice","note":"only if markets are quiet, else empty string"}`;
+}
+
 function salvageArray(clean, key) {
   const kIdx = clean.indexOf(`"${key}"`);
   if (kIdx === -1) return null;
@@ -186,18 +255,15 @@ function extractJson(text) {
   throw new Error("unparseable json");
 }
 
-async function callClaude(prompt, retries = 2) {
+async function callClaude(prompt, retries = 2, maxTokens = 1000) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      // The Anthropic key lives on the server. The browser only sends
+      // the prompt to our own /api/scan route, which forwards it.
+      const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: prompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
+        body: JSON.stringify({ prompt, maxTokens }),
       });
       const data = await response.json();
       const text = (data.content || [])
@@ -266,8 +332,8 @@ function RelTag({ rel }) {
   );
 }
 
-function CheckPill({ name, value }) {
-  const meta = CHECKS[name];
+function CheckPill({ name, value, dict = CHECKS }) {
+  const meta = dict[name];
   const color = value === "pass" ? C.green : value === "fail" ? C.red : C.dim;
   const mark = value === "pass" ? "\u2713" : value === "fail" ? "\u2717" : "?";
   return (
@@ -373,8 +439,10 @@ const PRICE_MOVE_PCT = 1.5;
 const VOL_SPIKE_X = 4;
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 
-// Ricardo's key candidates, pasted as one string; the app auto-tests both on connect
-const DEFAULT_KEYS = ["d93ak71r01qjqfqj2cag", "d93ak71r01qjqfqj2cb0"];
+// The Finnhub key comes from the environment now, never hardcoded.
+// It is fine for this key to reach the browser because the WebSocket
+// connects directly from the page, but it must not live in the repo.
+const DEFAULT_KEYS = [import.meta.env.VITE_FINNHUB_KEY].filter(Boolean);
 
 function Watcher({ watch, onExplain, explaining }) {
   const [key, setKey] = useState("");
@@ -389,10 +457,10 @@ function Watcher({ watch, onExplain, explaining }) {
   useEffect(() => {
     (async () => {
       try {
-        const k = await window.storage.get("pulse-finnhub-key");
-        setKey(k && k.value ? k.value : DEFAULT_KEYS[0]);
+        const k = await storage.get("pulse-finnhub-key");
+        setKey(k && k.value ? k.value : DEFAULT_KEYS[0] || "");
       } catch (e) {
-        setKey(DEFAULT_KEYS[0]);
+        setKey(DEFAULT_KEYS[0] || "");
       }
     })();
     return () => { if (wsRef.current) wsRef.current.close(); };
@@ -400,7 +468,7 @@ function Watcher({ watch, onExplain, explaining }) {
 
   async function saveKey(v) {
     setKey(v);
-    try { await window.storage.set("pulse-finnhub-key", v); } catch (e) {}
+    try { await storage.set("pulse-finnhub-key", v); } catch (e) {}
   }
 
   function handleTrades(trades) {
@@ -530,7 +598,7 @@ function Watcher({ watch, onExplain, explaining }) {
             style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}
           />
           <p className="text-xs mt-2 leading-relaxed" style={{ color: C.dim }}>
-            Your key is already loaded. Just hit Start. If the connection fails, the app auto-tries your backup key before giving up. Works during US market hours. {watch.length === 0 ? "Star at least one ticker first." : `Watching ${watch.length} ticker${watch.length > 1 ? "s" : ""} once started.`}
+            {key ? "Your key is loaded. Just hit Start." : "Paste your free Finnhub key from finnhub.io. It stays in your browser."} Works during US market hours. {watch.length === 0 ? "Star at least one ticker first." : `Watching ${watch.length} ticker${watch.length > 1 ? "s" : ""} once started.`}
           </p>
         </div>
       )}
@@ -588,15 +656,20 @@ export default function MarketPulse() {
   const [diamondNote, setDiamondNote] = useState("");
   const [diamondRun, setDiamondRun] = useState(null);
   const [diamondLoading, setDiamondLoading] = useState(false);
+  const [deep, setDeep] = useState(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+  const [brief, setBrief] = useState(null);
+  const [briefRun, setBriefRun] = useState(null);
+  const [briefLoading, setBriefLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const w = await window.storage.get("pulse-watchlist");
+        const w = await storage.get("pulse-watchlist");
         if (w) setWatch(JSON.parse(w.value));
       } catch (e) {}
       try {
-        const s = await window.storage.get("pulse-last-scan");
+        const s = await storage.get("pulse-last-scan");
         if (s) {
           const parsed = JSON.parse(s.value);
           setEvents(parsed.events || []);
@@ -606,7 +679,7 @@ export default function MarketPulse() {
         }
       } catch (e) {}
       try {
-        const d = await window.storage.get("pulse-diamonds");
+        const d = await storage.get("pulse-diamonds");
         if (d) {
           const parsed = JSON.parse(d.value);
           setDiamonds(parsed.candidates || []);
@@ -614,18 +687,26 @@ export default function MarketPulse() {
           setDiamondRun(parsed.at || null);
         }
       } catch (e) {}
+      try {
+        const b = await storage.get("pulse-daily-brief");
+        if (b) {
+          const parsed = JSON.parse(b.value);
+          setBrief(parsed.data || null);
+          setBriefRun(parsed.at || null);
+        }
+      } catch (e) {}
     })();
   }, []);
 
   useEffect(() => {
-    if (!loading && !diamondLoading) return;
+    if (!loading && !diamondLoading && !briefLoading) return;
     const id = setInterval(() => setLoadLine((n) => (n + 1) % 5), 5000);
     return () => clearInterval(id);
-  }, [loading, diamondLoading]);
+  }, [loading, diamondLoading, briefLoading]);
 
   async function saveWatch(next) {
     setWatch(next);
-    try { await window.storage.set("pulse-watchlist", JSON.stringify(next)); } catch (e) {}
+    try { await storage.set("pulse-watchlist", JSON.stringify(next)); } catch (e) {}
   }
 
   function toggleWatch(company) {
@@ -654,7 +735,7 @@ export default function MarketPulse() {
       setNote(result.note || "");
       setLastRun(at);
       try {
-        await window.storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
+        await storage.set("pulse-last-scan", JSON.stringify({ events: result.events || [], note: result.note || "", at, scope }));
       } catch (e) {}
     } catch (e) {
       setError("The scan did not come back clean, even after an automatic retry. Hit Run fresh scan again.");
@@ -679,7 +760,7 @@ export default function MarketPulse() {
       setDiamondNote(result.note || "");
       setDiamondRun(at);
       try {
-        await window.storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
+        await storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
       } catch (e) {}
     } catch (e) {
       setError("The diamond hunt did not come back clean, even after a retry. Run it again.");
@@ -691,6 +772,7 @@ export default function MarketPulse() {
     setFocusLoading(true);
     setFocus({ ...item, events: [], note: "" });
     setOwnedCheck(null);
+    setDeep(null);
     setError("");
     try {
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -707,6 +789,7 @@ export default function MarketPulse() {
     setOwnedLoading(true);
     setOwnedCheck({ ...item, supports: [], weakens: [], note: "" });
     setFocus(null);
+    setDeep(null);
     setError("");
     try {
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -719,12 +802,48 @@ export default function MarketPulse() {
     setOwnedLoading(false);
   }
 
+  async function runDeep(item) {
+    setDeepLoading(true);
+    setDeep({ ...item, data: null });
+    setFocus(null);
+    setOwnedCheck(null);
+    setError("");
+    try {
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(deepPrompt(item.name, item.ticker, dateStr), 2, 1600);
+      setDeep({ ...item, data: result });
+    } catch (e) {
+      setDeep(null);
+      setError(`The deep dive on ${item.ticker} did not come back clean. Try it again.`);
+    }
+    setDeepLoading(false);
+  }
+
+  async function runBrief() {
+    setBriefLoading(true);
+    setError("");
+    setLoadLine(0);
+    try {
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(briefPrompt(dateStr, watch.map((w) => w.ticker)), 2, 1400);
+      const at = new Date().toLocaleString();
+      setBrief(result);
+      setBriefRun(at);
+      try {
+        await storage.set("pulse-daily-brief", JSON.stringify({ data: result, at }));
+      } catch (e) {}
+    } catch (e) {
+      setError("The morning brief did not come back clean, even after a retry. Run it again.");
+    }
+    setBriefLoading(false);
+  }
+
   const groups = ["now", "soon", "context"]
     .map((k) => ({ key: k, ...URGENCY[k], items: events.filter((e) => e.urgency === k) }))
     .filter((g) => g.items.length > 0);
 
-  const busy = loading || diamondLoading;
-  const busyLines = diamondLoading ? DIAMOND_LINES : LOADING_LINES;
+  const busy = loading || diamondLoading || briefLoading;
+  const busyLines = diamondLoading ? DIAMOND_LINES : briefLoading ? BRIEF_LINES : LOADING_LINES;
 
   return (
     <div className="min-h-screen" style={{ background: C.bg, color: C.text }}>
@@ -755,7 +874,7 @@ export default function MarketPulse() {
               >
                 {loading ? "Scanning..." : "Run fresh scan"}
               </button>
-            ) : (
+            ) : tab === "diamonds" ? (
               <button
                 onClick={runDiamonds}
                 disabled={busy}
@@ -763,6 +882,15 @@ export default function MarketPulse() {
                 style={{ background: busy ? C.panel : C.violet, color: busy ? C.dim : "#1A0F2E", border: `1px solid ${busy ? C.line : C.violet}`, cursor: busy ? "default" : "pointer" }}
               >
                 {diamondLoading ? "Hunting..." : "Hunt for diamonds"}
+              </button>
+            ) : (
+              <button
+                onClick={runBrief}
+                disabled={busy}
+                className="px-4 py-2.5 rounded-lg text-sm font-semibold"
+                style={{ background: busy ? C.panel : C.soon, color: busy ? C.dim : "#06121C", border: `1px solid ${busy ? C.line : C.soon}`, cursor: busy ? "default" : "pointer" }}
+              >
+                {briefLoading ? "Reading the market..." : "Run morning brief"}
               </button>
             )}
           </div>
@@ -782,6 +910,13 @@ export default function MarketPulse() {
             >
               Diamond scanner
             </button>
+            <button
+              onClick={() => setTab("brief")}
+              className="px-3 py-1.5 rounded-md text-sm"
+              style={{ background: tab === "brief" ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${tab === "brief" ? C.soon : C.line}`, color: tab === "brief" ? C.soon : C.dim, cursor: "pointer" }}
+            >
+              Daily brief
+            </button>
             {tab === "pulse" &&
               Object.entries(SCOPES).map(([k, v]) => (
                 <button
@@ -793,9 +928,9 @@ export default function MarketPulse() {
                   {v.label}
                 </button>
               ))}
-            {(tab === "pulse" ? lastRun : diamondRun) && (
+            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : briefRun) && (
               <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                Last run {tab === "pulse" ? lastRun : diamondRun}
+                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : briefRun}
               </span>
             )}
           </div>
@@ -815,6 +950,15 @@ export default function MarketPulse() {
                     title={`Run a focused news check on ${w.name}`}
                   >
                     {w.ticker} \u2192
+                  </button>
+                  <button
+                    onClick={() => runDeep(w)}
+                    disabled={focusLoading || ownedLoading || deepLoading}
+                    className="text-xs px-2 py-1 rounded"
+                    style={{ border: `1px solid ${C.violet}`, color: C.violet, background: "transparent", cursor: "pointer" }}
+                    title={`Full research report on ${w.name}: fundamentals, checklist, chart read, and news`}
+                  >
+                    Deep dive
                   </button>
                   <button
                     onClick={() => toggleOwned(w.ticker)}
@@ -902,6 +1046,86 @@ export default function MarketPulse() {
                 <p className="text-xs" style={{ color: C.dim }}>Signals only, both sides shown. The decision is yours.</p>
               </div>
             )}
+          </section>
+        )}
+
+        {deep && (
+          <section className="mb-5 rounded-lg p-4" style={{ background: C.panel, border: `1px solid ${C.violet}` }}>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold" style={{ color: C.violet }}>
+                Deep dive: {deep.name} ({deep.ticker})
+              </p>
+              <button onClick={() => setDeep(null)} className="text-xs px-2 py-1 rounded" style={{ color: C.dim, border: `1px solid ${C.line}`, background: "transparent", cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+            {deepLoading ? (
+              <p className="text-sm" style={{ color: C.dim }}>
+                Building the full report on {deep.ticker}: fundamentals, quality checklist, chart read, and news impact... about a minute.
+              </p>
+            ) : deep.data ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs mb-2" style={{ color: C.violet, fontFamily: "'IBM Plex Mono', monospace" }}>SNAPSHOT</p>
+                  <p className="text-sm leading-relaxed mb-1" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>What they do: </span>{(deep.data.snapshot || {}).what || "unknown"}
+                  </p>
+                  <p className="text-sm leading-relaxed mb-1" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>How they make money: </span>{(deep.data.snapshot || {}).model || "unknown"}
+                  </p>
+                  <p className="text-sm leading-relaxed mb-1" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>Edge: </span>{(deep.data.snapshot || {}).edge || "unknown"}
+                  </p>
+                  <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>Financial health: </span>{(deep.data.snapshot || {}).health || "unknown"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs mb-2" style={{ color: C.violet, fontFamily: "'IBM Plex Mono', monospace" }}>QUALITY CHECKLIST</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.keys(DEEP_CHECKS).map((k) => (
+                      <CheckPill key={k} name={k} value={(deep.data.checklist || {})[k] || "unknown"} dict={DEEP_CHECKS} />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs mb-2" style={{ color: C.violet, fontFamily: "'IBM Plex Mono', monospace" }}>CHART READ</p>
+                  <p className="text-sm leading-relaxed mb-1" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>Trend: </span>
+                    <span style={{ color: (deep.data.technicals || {}).trend === "up" ? C.green : (deep.data.technicals || {}).trend === "down" ? C.red : C.gold }}>
+                      {(deep.data.technicals || {}).trend || "unknown"}
+                    </span>
+                    <span style={{ color: C.dim }}> {"·"} Levels: </span>{(deep.data.technicals || {}).levels || "unknown"}
+                  </p>
+                  <p className="text-sm leading-relaxed mb-1" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>Volume: </span>{(deep.data.technicals || {}).volume || "unknown"}
+                  </p>
+                  <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                    <span style={{ color: C.dim }}>Scenarios: </span>{(deep.data.technicals || {}).read || "unknown"}
+                  </p>
+                </div>
+                {(deep.data.news || []).length > 0 && (
+                  <div>
+                    <p className="text-xs mb-2" style={{ color: C.violet, fontFamily: "'IBM Plex Mono', monospace" }}>NEWS IMPACT</p>
+                    {(deep.data.news || []).map((n, i) => (
+                      <div key={i} className="mb-2">
+                        <p className="text-sm leading-relaxed" style={{ color: C.text, fontWeight: 600 }}>{n.headline}</p>
+                        <p className="text-sm leading-relaxed" style={{ color: C.text, opacity: 0.85 }}>
+                          <span style={{ color: C.dim }}>Short term: </span>{n.shortTerm} <span style={{ color: C.dim }}>Long term: </span>{n.longTerm}
+                        </p>
+                        <p className="text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>{n.source} {"·"} {n.age}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-sm" style={{ color: C.red, opacity: 0.9 }}>
+                  <span style={{ color: C.dim }}>Biggest risk: </span>{deep.data.biggestRisk || "unknown"}
+                </p>
+                <p className="text-xs" style={{ color: C.dim }}>
+                  Research scorecard only, scenarios not predictions, never advice. Confidence: {deep.data.confidence || "low"}.
+                </p>
+              </div>
+            ) : null}
           </section>
         )}
 
@@ -1006,6 +1230,88 @@ export default function MarketPulse() {
                 {diamonds.map((cand, i) => (
                   <DiamondCard key={i} cand={cand} watch={watch} onToggle={toggleWatch} />
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "brief" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(95,178,232,0.06)", border: `1px solid ${C.soon}`, color: C.dim }}>
+              <span style={{ color: C.soon }}>How this works: </span>
+              one button builds your ten minute morning read. Market mood and what is driving it, the themes moving money today, fresh news on your starred tickers, and one honest discipline reminder. Run it once before the open.
+            </div>
+            {!briefLoading && !brief && (
+              <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                <p className="text-base" style={{ color: C.text }}>No brief yet today.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Run morning brief. Starring tickers first makes the watchlist section richer.</p>
+              </div>
+            )}
+            {!briefLoading && brief && (
+              <div className="space-y-5">
+                {brief.market && (
+                  <section className="rounded-lg p-4" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <p className="text-xs" style={{ color: C.soon, fontFamily: "'IBM Plex Mono', monospace" }}>MARKET MOOD</p>
+                      {MOODS[brief.market.mood] && (
+                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ border: `1px solid ${MOODS[brief.market.mood].color}`, color: MOODS[brief.market.mood].color, fontFamily: "'IBM Plex Mono', monospace" }}>
+                          {MOODS[brief.market.mood].label}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm leading-relaxed" style={{ color: C.text }}>{brief.market.summary}</p>
+                    {(brief.market.drivers || []).map((d, i) => (
+                      <p key={i} className="text-sm leading-relaxed mt-1" style={{ color: C.text, opacity: 0.85 }}>
+                        <span style={{ color: C.dim }}>Driver: </span>{d}
+                      </p>
+                    ))}
+                  </section>
+                )}
+                {(brief.themes || []).length > 0 && (
+                  <section>
+                    <p className="text-xs mb-2" style={{ color: C.soon, fontFamily: "'IBM Plex Mono', monospace" }}>TODAY'S THEMES</p>
+                    <div className="space-y-3">
+                      {(brief.themes || []).map((t, i) => (
+                        <div key={i} className="rounded-lg p-4" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+                          <p className="text-sm leading-snug" style={{ color: C.text, fontWeight: 600 }}>{t.theme}</p>
+                          <p className="text-sm leading-relaxed mt-1" style={{ color: C.dim }}>{t.why}</p>
+                          {(t.tickers || []).length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {(t.tickers || []).map((tk, j) => (
+                                <TickerChip key={j} company={{ ticker: tk, name: tk }} starred={watch.some((w) => w.ticker === tk)} onToggle={toggleWatch} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {(brief.watchlist || []).length > 0 && (
+                  <section>
+                    <p className="text-xs mb-2" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace" }}>YOUR TICKERS IN THE NEWS</p>
+                    <div className="space-y-2">
+                      {(brief.watchlist || []).map((w, i) => (
+                        <div key={i} className="rounded-lg px-4 py-3" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+                          <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                            <span style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace" }}>{w.ticker}</span> {w.item}
+                          </p>
+                          <p className="text-sm leading-relaxed" style={{ color: C.dim }}>
+                            {w.why} <span className="text-xs" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>({w.source}, {w.age})</span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {brief.discipline && (
+                  <p className="text-sm rounded-lg px-4 py-3 leading-relaxed" style={{ background: "rgba(245,198,100,0.06)", border: `1px solid ${C.line}`, color: C.dim }}>
+                    <span style={{ color: C.gold }}>Discipline check: </span>{brief.discipline}
+                  </p>
+                )}
+                {brief.note && (
+                  <p className="text-sm rounded-lg px-4 py-3" style={{ background: C.panelSoft, border: `1px solid ${C.line}`, color: C.text }}>{brief.note}</p>
+                )}
               </div>
             )}
           </>
