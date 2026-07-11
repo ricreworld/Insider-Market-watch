@@ -4,7 +4,8 @@
 //   npm run dev:api
 // It reads ANTHROPIC_API_KEY from .env via node --env-file.
 import http from "node:http";
-import handler from "./api/scan.js";
+import scanHandler from "./api/scan.js";
+import wireHandler from "./api/wire.js";
 
 const PORT = 3001;
 
@@ -20,6 +21,11 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(obj));
   };
 
+  if (req.url === "/api/wire") {
+    await wireHandler(req, res);
+    return;
+  }
+
   if (req.url !== "/api/scan") {
     res.status(404).json({ error: "not found" });
     return;
@@ -33,7 +39,7 @@ const server = http.createServer(async (req, res) => {
     req.body = {};
   }
 
-  await handler(req, res);
+  await scanHandler(req, res);
 });
 
 server.listen(PORT, () => {

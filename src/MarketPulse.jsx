@@ -53,6 +53,20 @@ const MOODS = {
   mixed: { label: "Mixed", color: "#F5C664" },
 };
 
+// Source kinds on the live wire, roughly ordered by how early they are.
+const KINDS = {
+  filing: { label: "SEC filing", color: "#5FB2E8" },
+  insider: { label: "Insider Form 4", color: "#B08FE8" },
+  pr: { label: "Press release", color: "#7BC98F" },
+  news: { label: "News", color: "#8B93A7" },
+};
+
+const PRESSURE = {
+  up: { label: "Pressure up", color: "#7BC98F", mark: "↑" },
+  down: { label: "Pressure down", color: "#E06C5F", mark: "↓" },
+  unclear: { label: "Pressure unclear", color: "#8B93A7", mark: "→" },
+};
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -78,6 +92,14 @@ const DIAMOND_LINES = [
   "Looking for insider buying in SEC filings...",
   "Killing the trap stocks, keeping candidates...",
   "Building scorecards, almost done...",
+];
+
+const WIRE_LINES = [
+  "Reading the raw wire...",
+  "Killing the fluff, ads, and recycled items...",
+  "Mapping each headline to the stock it touches...",
+  "Checking which moves already happened...",
+  "Scoring the survivors, almost done...",
 ];
 
 const BRIEF_LINES = [
@@ -208,6 +230,42 @@ Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 1
 {"market":{"mood":"risk_on|risk_off|mixed","summary":"the market this morning in one plain sentence","drivers":["driver one","driver two"]},"themes":[{"theme":"what is moving","why":"the real mechanism","tickers":["TICK"]}],"watchlist":[{"ticker":"TICK","item":"what happened","why":"real mechanism","source":"publication","age":"how recent"}],"discipline":"one honest reminder about the watchlist mix, no advice","note":"only if markets are quiet, else empty string"}`;
 }
 
+// Mode seven, wire triage. Takes the raw headlines pulled from the free
+// wires and asks: which of these could move a specific stock before the
+// market fully reacts, and in which direction does the pressure point.
+// Direction of pressure is mechanics, never a buy or sell call.
+function wirePrompt(dateStr, items) {
+  const list = items
+    .map((it, i) => `${i + 1}. [${it.source}] ${it.title}${it.age ? ` (${it.age})` : ""}`)
+    .join("\n");
+  return `${BRIEF}
+
+Mode seven, wire triage. Today is ${dateStr}. Below are raw headlines pulled minutes ago from free public wires: SEC 8-K filings, insider Form 4 filings, press release wires, and news feeds. Most are noise. Your job is finding the few that could move a specific stock before the market fully reacts.
+
+${list}
+
+RULES:
+1. Pick at most 6 items with a real mechanism connecting them to a specific stock. Skip fluff, ads, macro commentary with no ticker, and routine filings.
+2. Map each pick to tickers. Only name a ticker you are certain of, else "?". Use web search only to verify a ticker or check whether the price already moved.
+3. pressure is the direction this kind of news typically pushes the stock: up, down, or unclear. It describes mechanics. It is never a recommendation.
+4. For Form 4 items, say whether it is buying or selling. Executive buying with their own money is the stronger signal.
+5. n is the number of the headline in the list above. Keep it exact.
+
+Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 18 words.
+
+{"picks":[{"n":1,"headline":"short restatement","tickers":["TICK"],"mechanism":"why this moves the stock","pressure":"up|down|unclear","reacted":"no|partial|yes","confidence":"low|medium|high"}],"note":"only if nothing on the wire is actionable, else empty string"}`;
+}
+
+function fmtAge(iso) {
+  if (!iso) return "";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.round(hrs / 24)} d ago`;
+}
+
 function salvageArray(clean, key) {
   const kIdx = clean.indexOf(`"${key}"`);
   if (kIdx === -1) return null;
@@ -252,6 +310,8 @@ function extractJson(text) {
   if (candidates) return { candidates, note: "" };
   const supports = salvageArray(clean, "supports");
   if (supports) return { supports, weakens: salvageArray(clean, "weakens") || [], note: "" };
+  const picks = salvageArray(clean, "picks");
+  if (picks) return { picks, note: "" };
   throw new Error("unparseable json");
 }
 
@@ -661,6 +721,15 @@ export default function MarketPulse() {
   const [brief, setBrief] = useState(null);
   const [briefRun, setBriefRun] = useState(null);
   const [briefLoading, setBriefLoading] = useState(false);
+  const [wire, setWire] = useState([]);
+  const [wireAt, setWireAt] = useState(null);
+  const [wireLoading, setWireLoading] = useState(false);
+  const [wireFailed, setWireFailed] = useState([]);
+  const [autoWire, setAutoWire] = useState(false);
+  const [picks, setPicks] = useState([]);
+  const [picksNote, setPicksNote] = useState("");
+  const [picksRun, setPicksRun] = useState(null);
+  const [picksLoading, setPicksLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -695,14 +764,34 @@ export default function MarketPulse() {
           setBriefRun(parsed.at || null);
         }
       } catch (e) {}
+      try {
+        const p = await storage.get("pulse-wire-picks");
+        if (p) {
+          const parsed = JSON.parse(p.value);
+          setPicks(parsed.picks || []);
+          setPicksNote(parsed.note || "");
+          setPicksRun(parsed.at || null);
+        }
+      } catch (e) {}
     })();
   }, []);
 
   useEffect(() => {
-    if (!loading && !diamondLoading && !briefLoading) return;
+    if (!loading && !diamondLoading && !briefLoading && !picksLoading) return;
     const id = setInterval(() => setLoadLine((n) => (n + 1) % 5), 5000);
     return () => clearInterval(id);
-  }, [loading, diamondLoading, briefLoading]);
+  }, [loading, diamondLoading, briefLoading, picksLoading]);
+
+  // While the wire tab is open with auto refresh on, re-pull the raw
+  // feeds every two minutes. Only the free feeds refresh automatically;
+  // the intelligence pass stays a button because it costs tokens.
+  useEffect(() => {
+    if (tab !== "wire" || !autoWire) return;
+    const id = setInterval(() => {
+      loadWire();
+    }, 120000);
+    return () => clearInterval(id);
+  }, [tab, autoWire]);
 
   async function saveWatch(next) {
     setWatch(next);
@@ -838,12 +927,60 @@ export default function MarketPulse() {
     setBriefLoading(false);
   }
 
+  async function loadWire() {
+    setWireLoading(true);
+    setError("");
+    try {
+      const r = await fetch("/api/wire");
+      const data = await r.json();
+      const items = (data.items || []).map((it) => ({ ...it, age: fmtAge(it.at) }));
+      setWire(items);
+      setWireAt(new Date().toLocaleTimeString());
+      setWireFailed(data.failed || []);
+      setWireLoading(false);
+      return items;
+    } catch (e) {
+      setError("Could not pull the wire feeds. Check that the API server is running, then try again.");
+      setWireLoading(false);
+      return [];
+    }
+  }
+
+  async function runPicks() {
+    setPicksLoading(true);
+    setError("");
+    setLoadLine(0);
+    try {
+      let items = wire;
+      if (items.length === 0) items = await loadWire();
+      if (items.length === 0) throw new Error("no wire items");
+      const batch = items.slice(0, 40);
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(wirePrompt(dateStr, batch), 2, 1600);
+      const at = new Date().toLocaleString();
+      // Reattach the original link and source so every pick stays traceable.
+      const enriched = (result.picks || []).map((p) => {
+        const src = batch[(p.n || 0) - 1];
+        return { ...p, link: src ? src.link : "", source: src ? src.source : "", age: src ? src.age : "" };
+      });
+      setPicks(enriched);
+      setPicksNote(result.note || "");
+      setPicksRun(at);
+      try {
+        await storage.set("pulse-wire-picks", JSON.stringify({ picks: enriched, note: result.note || "", at }));
+      } catch (e) {}
+    } catch (e) {
+      setError("The wire triage did not come back clean, even after a retry. Run it again.");
+    }
+    setPicksLoading(false);
+  }
+
   const groups = ["now", "soon", "context"]
     .map((k) => ({ key: k, ...URGENCY[k], items: events.filter((e) => e.urgency === k) }))
     .filter((g) => g.items.length > 0);
 
-  const busy = loading || diamondLoading || briefLoading;
-  const busyLines = diamondLoading ? DIAMOND_LINES : briefLoading ? BRIEF_LINES : LOADING_LINES;
+  const busy = loading || diamondLoading || briefLoading || picksLoading;
+  const busyLines = diamondLoading ? DIAMOND_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
 
   return (
     <div className="min-h-screen" style={{ background: C.bg, color: C.text }}>
@@ -883,7 +1020,7 @@ export default function MarketPulse() {
               >
                 {diamondLoading ? "Hunting..." : "Hunt for diamonds"}
               </button>
-            ) : (
+            ) : tab === "brief" ? (
               <button
                 onClick={runBrief}
                 disabled={busy}
@@ -891,6 +1028,15 @@ export default function MarketPulse() {
                 style={{ background: busy ? C.panel : C.soon, color: busy ? C.dim : "#06121C", border: `1px solid ${busy ? C.line : C.soon}`, cursor: busy ? "default" : "pointer" }}
               >
                 {briefLoading ? "Reading the market..." : "Run morning brief"}
+              </button>
+            ) : (
+              <button
+                onClick={runPicks}
+                disabled={busy || wireLoading}
+                className="px-4 py-2.5 rounded-lg text-sm font-semibold"
+                style={{ background: busy ? C.panel : C.green, color: busy ? C.dim : "#0A1A0F", border: `1px solid ${busy ? C.line : C.green}`, cursor: busy ? "default" : "pointer" }}
+              >
+                {picksLoading ? "Triaging the wire..." : "Find the movers"}
               </button>
             )}
           </div>
@@ -917,6 +1063,13 @@ export default function MarketPulse() {
             >
               Daily brief
             </button>
+            <button
+              onClick={() => { setTab("wire"); if (wire.length === 0 && !wireLoading) loadWire(); }}
+              className="px-3 py-1.5 rounded-md text-sm"
+              style={{ background: tab === "wire" ? "rgba(123,201,143,0.14)" : "transparent", border: `1px solid ${tab === "wire" ? C.green : C.line}`, color: tab === "wire" ? C.green : C.dim, cursor: "pointer" }}
+            >
+              Live wire
+            </button>
             {tab === "pulse" &&
               Object.entries(SCOPES).map(([k, v]) => (
                 <button
@@ -928,9 +1081,9 @@ export default function MarketPulse() {
                   {v.label}
                 </button>
               ))}
-            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : briefRun) && (
+            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : picksRun) && (
               <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : briefRun}
+                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : picksRun}
               </span>
             )}
           </div>
@@ -1314,6 +1467,126 @@ export default function MarketPulse() {
                 )}
               </div>
             )}
+          </>
+        )}
+
+        {tab === "wire" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(123,201,143,0.06)", border: `1px solid ${C.green}`, color: C.dim }}>
+              <span style={{ color: C.green }}>How this works: </span>
+              this is the legal inside scoop. SEC filings, executive Form 4 buys and sells, and press releases hit these free public wires seconds after they publish, before most news sites rewrite them. Refresh pulls the raw feeds. Find the movers reads them and keeps only items with a real mechanism, mapped to tickers, with the direction the pressure points. Pressure is mechanics, never a buy or sell call. The decision is always yours.
+            </div>
+
+            <div className="mb-4 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={loadWire}
+                disabled={wireLoading}
+                className="text-xs px-2.5 py-1.5 rounded"
+                style={{ border: `1px solid ${C.green}`, color: C.green, background: "transparent", cursor: "pointer" }}
+              >
+                {wireLoading ? "Pulling feeds..." : "Refresh the wire"}
+              </button>
+              <button
+                onClick={() => setAutoWire(!autoWire)}
+                className="text-xs px-2.5 py-1.5 rounded"
+                style={{ border: `1px solid ${autoWire ? C.green : C.line}`, color: autoWire ? C.green : C.dim, background: autoWire ? "rgba(123,201,143,0.08)" : "transparent", cursor: "pointer" }}
+              >
+                {autoWire ? "Auto refresh on, every 2 min" : "Auto refresh off"}
+              </button>
+              {wireAt && (
+                <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+                  Wire pulled {wireAt}
+                </span>
+              )}
+            </div>
+
+            {wireFailed.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: C.dim }}>
+                Some feeds did not answer this time: {wireFailed.join(", ")}. The rest came through.
+              </p>
+            )}
+
+            {picks.length > 0 && (
+              <section className="mb-5">
+                <p className="text-xs mb-2" style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace" }}>THE MOVERS</p>
+                <div className="space-y-3">
+                  {picks.map((p, i) => {
+                    const pr = PRESSURE[p.pressure] || PRESSURE.unclear;
+                    return (
+                      <div key={i} className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+                        <div style={{ width: 4, background: pr.color, flexShrink: 0 }} />
+                        <div className="flex-1 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <h3 className="text-base leading-snug" style={{ color: C.text, fontWeight: 600 }}>{p.headline}</h3>
+                            <ConfidenceMeter level={p.confidence} color={pr.color} />
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {(p.tickers || []).map((tk, j) => (
+                              <TickerChip key={j} company={{ ticker: tk, name: tk }} starred={watch.some((w) => w.ticker === tk)} onToggle={toggleWatch} />
+                            ))}
+                            <span className="text-xs px-2 py-0.5 rounded-full" style={{ border: `1px solid ${pr.color}`, color: pr.color, fontFamily: "'IBM Plex Mono', monospace" }}>
+                              {pr.mark} {pr.label}
+                            </span>
+                            <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: C.dim, border: `1px solid ${C.line}` }}>
+                              Market reacted: {p.reacted || "unknown"}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.85 }}>{p.mechanism}</p>
+                          <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {p.source} {p.age ? `· ${p.age}` : ""}{" "}
+                            {p.link && (
+                              <a href={p.link} target="_blank" rel="noreferrer" style={{ color: C.soon }}>
+                                open source
+                              </a>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {!picksLoading && picksNote && picks.length === 0 && (
+              <div className="rounded-lg p-5 mb-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+                <p className="text-sm" style={{ color: C.text }}>{picksNote}</p>
+              </div>
+            )}
+
+            <section>
+              <p className="text-xs mb-2" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>RAW WIRE, NEWEST FIRST</p>
+              {wire.length === 0 && !wireLoading ? (
+                <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                  <p className="text-base" style={{ color: C.text }}>The wire is empty.</p>
+                  <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Refresh the wire to pull SEC filings, insider trades, press releases, and news.</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {wire.slice(0, 40).map((it, i) => {
+                    const k = KINDS[it.kind] || KINDS.news;
+                    return (
+                      <a
+                        key={i}
+                        href={it.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block px-3 py-2 rounded-md"
+                        style={{ background: C.panelSoft, border: `1px solid ${C.line}`, textDecoration: "none" }}
+                      >
+                        <span className="text-xs px-1.5 py-0.5 rounded mr-2" style={{ color: k.color, border: `1px solid ${k.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                          {k.label}
+                        </span>
+                        <span className="text-sm" style={{ color: C.text }}>{it.title}</span>
+                        <span className="text-xs ml-2" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+                          {it.source} {it.age ? `· ${it.age}` : ""}
+                        </span>
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </>
         )}
 
