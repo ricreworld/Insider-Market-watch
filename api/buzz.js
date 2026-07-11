@@ -61,7 +61,13 @@ export default async function handler(req, res) {
       } finally {
         clearTimeout(timer);
       }
-    })().catch((e) => out.failed.push(`Finnhub earnings calendar (${(e && e.message) || "no answer"})`)),
+    })().catch((e) =>
+      out.failed.push(
+        // Safe diagnostics: the key's length and first 4 characters only,
+        // so a wrong or stale stored value can be spotted from the page.
+        `Finnhub earnings calendar (${(e && e.message) || "no answer"}; server key length ${rawKey.length}, starts ${rawKey.slice(0, 4) || "empty"})`
+      )
+    ),
   ]);
 
   res.status(200).json(out);
