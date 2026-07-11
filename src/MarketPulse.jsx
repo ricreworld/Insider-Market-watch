@@ -427,7 +427,7 @@ function EventCard({ ev, watch, onToggle }) {
           <div className="flex-1">
             <h3 className="text-base leading-snug" style={{ fontWeight: 600 }}>{ev.headline}</h3>
             <p className="text-xs mt-1" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-              {tickers.join("  ")} {tickers.length > 0 ? "\u00b7 " : ""}{ev.age || ""} \u00b7 tap to {open ? "close" : "expand"}
+              {tickers.join("  ")} {tickers.length > 0 ? "\u00b7 " : ""}{ev.age || ""} {"\u00b7"} tap to {open ? "close" : "expand"}
             </p>
           </div>
           <ConfidenceMeter level={ev.confidence} color={u.color} />
@@ -450,7 +450,7 @@ function EventCard({ ev, watch, onToggle }) {
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <FreshnessTag ev={ev} />
               <span className="text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                {ev.source} \u00b7 {ev.age}
+                {ev.source} {"\u00b7"} {ev.age}
               </span>
             </div>
           </div>
@@ -630,7 +630,7 @@ function Watcher({ watch, onExplain, explaining }) {
     <section className="mb-5 rounded-lg p-4" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs" style={{ color: C.soon, fontFamily: "'IBM Plex Mono', monospace" }}>
-          LIVE WATCHER {status === "live" && <span style={{ color: C.green }}>\u25cf connected</span>}
+          LIVE WATCHER {status === "live" && <span style={{ color: C.green }}>{"\u25cf"} connected</span>}
           {status === "connecting" && <span style={{ color: C.gold }}> connecting...</span>}
           {status === "error" && <span style={{ color: C.red }}> connection failed, check your key</span>}
         </p>
@@ -1119,7 +1119,7 @@ export default function MarketPulse() {
                     style={{ background: "rgba(245,198,100,0.1)", border: `1px solid ${C.gold}`, color: C.gold, fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer" }}
                     title={`Run a focused news check on ${w.name}`}
                   >
-                    {w.ticker} \u2192
+                    {w.ticker} {"\u2192"}
                   </button>
                   <button
                     onClick={() => runDeep(w)}
@@ -1160,7 +1160,7 @@ export default function MarketPulse() {
                     style={{ color: C.dim, background: "transparent", border: "none", cursor: "pointer" }}
                     title={`Remove ${w.ticker}`}
                   >
-                    \u2715
+                    {"\u2715"}
                   </button>
                 </div>
               ))}
