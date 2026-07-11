@@ -7,7 +7,7 @@ It never gives investment advice, price predictions, or buy, sell, or hold recom
 ## What you need before starting
 
 1. Node.js version 20 or newer installed on your computer.
-2. An Anthropic API key from https://console.anthropic.com. This key stays on the server and never reaches the browser.
+2. A key for the AI brain, either a free Gemini key from https://aistudio.google.com or a paid Anthropic key from https://console.anthropic.com. Both stay on the server and never reach the browser. You can also run with neither; only the AI buttons need one.
 3. A free Finnhub API key from https://finnhub.io. This one powers the live price watcher in the browser.
 
 ## Setup, step by step
@@ -42,7 +42,7 @@ Step 6. Open the address Vite prints, usually http://localhost:5173. That is it.
 
 ## How the pieces fit together
 
-The React app lives in src/MarketPulse.jsx. When you run a scan, the browser sends only the prompt text to /api/scan, a small backend route in api/scan.js. That route adds your Anthropic key on the server side and forwards the request to the Anthropic API with web search enabled, model claude-sonnet-4-6. Quick scans use 1000 max tokens; the deep dive and daily brief ask for more room, capped at 2000 on the server. The response comes back to the browser, where extractJson parses it, including the salvage logic that rescues complete items when a response gets cut off.
+The React app lives in src/MarketPulse.jsx. When you run a scan, the browser sends only the prompt text to /api/scan, a small backend route in api/scan.js. That route picks a brain on the server side: Gemini 2.5 Flash with Google Search grounding when GEMINI_API_KEY is set, otherwise the Anthropic API with web search enabled, model claude-sonnet-4-6. If Gemini fails and an Anthropic key exists, it falls back automatically. Quick scans use 1000 max tokens; the deep dive and daily brief ask for more room, capped at 2000 on the server. The response comes back to the browser, where extractJson parses it, including the salvage logic that rescues complete items when a response gets cut off.
 
 Your watchlist, last scan, diamond results, daily brief, and Finnhub key are saved in your browser's localStorage under these keys: pulse-watchlist, pulse-last-scan, pulse-diamonds, pulse-daily-brief, pulse-finnhub-key. Clearing your browser data clears them.
 
@@ -52,7 +52,7 @@ The live watcher connects straight from the browser to the Finnhub WebSocket dur
 
 The app works with zero paid services. The Live wire tab pulls SEC filings, insider Form 4 filings, press releases, and news feeds, all free, and the server tags items with their tickers on its own using the SEC's free company to ticker file plus the tickers that press releases print in their own headlines. Star any tagged ticker straight from the wire, and the live watcher tracks it in real time on a free Finnhub key. That whole loop costs nothing.
 
-The AI buttons are the only part that needs money: fresh scan, diamond hunt, deep dive, morning brief, position check, and Find the movers all call the Anthropic API, which has no free tier and bills a few cents per scan. If ANTHROPIC_API_KEY is not set, those buttons explain that plainly instead of failing, and everything else keeps working. You can add the key later without changing any code.
+The AI buttons, fresh scan, diamond hunt, deep dive, morning brief, position check, and Find the movers, can also run free. The app supports two AI brains. Gemini, with a free key from aistudio.google.com set as GEMINI_API_KEY, is used first whenever present, so everyday use costs nothing within Google's free daily allowance. The Anthropic API, set as ANTHROPIC_API_KEY, is the paid backup, used only when the free brain is unavailable or its daily allowance runs out, so paid credit lasts a long time. With neither key set, the AI buttons explain that plainly instead of failing, and everything else keeps working.
 
 ## Deploying to a free host
 
@@ -60,7 +60,7 @@ This project is set up for Vercel, which has a free tier that covers everything 
 
 1. Push this repository to GitHub.
 2. Go to https://vercel.com, sign in with GitHub, and import the repository. Vercel detects Vite automatically and picks up the api folder as serverless functions with no extra configuration.
-3. In the project settings on Vercel, under Environment Variables, add ANTHROPIC_API_KEY with your Anthropic key, VITE_FINNHUB_KEY with your Finnhub key, and SEC_CONTACT_EMAIL with your email.
+3. In the project settings on Vercel, under Environment Variables, add VITE_FINNHUB_KEY with your Finnhub key, SEC_CONTACT_EMAIL with your email, and for the AI brain add GEMINI_API_KEY with your free Gemini key or ANTHROPIC_API_KEY with your paid Anthropic key, or both to get free first with paid backup.
 4. Deploy. Your app will be live at the URL Vercel gives you, and the Anthropic key stays server side.
 
 ## The four modes
