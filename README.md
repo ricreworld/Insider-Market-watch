@@ -78,6 +78,14 @@ Mode five is the deep dive. The Deep dive button next to any ticker in your foll
 
 Mode six is the daily brief, its own tab. One button builds a ten minute morning read: overall market mood with the drivers behind it, the themes moving money today with tappable tickers, fresh news that touches your starred watchlist specifically, and one honest discipline reminder about the risk mix in your list. The last brief is saved so it is still there when you come back.
 
+The live wire tab also carries the put pressure check. For each starred ticker, up to eight, it totals the previous trading day's traded put options against call options from Alpha Vantage. Far more puts than calls can mean someone is betting on a fall, or simply insuring a large position; the page says both. Real time options flow is a paid product everywhere, so this is deliberately the free version, one day behind, cached on the server to respect the free daily limit.
+
+The live watcher can send system notifications. Tap Turn on alert notifications once, allow it in the browser, and alerts reach you even when the tab is in the background, as long as the page stays open somewhere.
+
+The daily brief has an auto mode. Turn on Auto brief in its tab and the brief runs by itself the first time you open the app each day, using the free brain when a Gemini key is present.
+
+The History tab remembers the last forty runs of everything, scans, hunts, briefs, wire triages, and put checks, saved in your browser. Reviewing which signals were early and which were noise is how the tool makes you sharper over time.
+
 Mode seven is the live wire, its own tab. The backend pulls free public sources that publish before most news sites rewrite them: the SEC 8-K filing wire for material corporate events, the SEC Form 4 wire where executives disclose their own stock buys and sells, press release wires, and financial news feeds. Refresh the wire pulls the raw headlines, with optional auto refresh every two minutes. Find the movers sends the freshest headlines through one intelligence pass that throws away the noise and keeps only items with a real mechanism, each mapped to tickers with the direction the pressure points, up, down, or unclear, whether the market has reacted yet, and a confidence level. Pressure describes mechanics, it is never a buy or sell recommendation. This is the legal version of the inside scoop: public information seconds after it becomes public.
 
 ## Honesty line
