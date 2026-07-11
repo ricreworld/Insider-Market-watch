@@ -9,6 +9,7 @@ It never gives investment advice, price predictions, or buy, sell, or hold recom
 1. Node.js version 20 or newer installed on your computer.
 2. A key for the AI brain, either a free Gemini key from https://aistudio.google.com or a paid Anthropic key from https://console.anthropic.com. Both stay on the server and never reach the browser. You can also run with neither; only the AI buttons need one.
 3. A free Finnhub API key from https://finnhub.io. This one powers the live price watcher in the browser.
+4. A free Alpha Vantage key from https://www.alphavantage.co/support/#api-key. This one powers the earnings calendar on the Live wire tab.
 
 ## Setup, step by step
 
@@ -60,7 +61,7 @@ This project is set up for Vercel, which has a free tier that covers everything 
 
 1. Push this repository to GitHub.
 2. Go to https://vercel.com, sign in with GitHub, and import the repository. Vercel detects Vite automatically and picks up the api folder as serverless functions with no extra configuration.
-3. In the project settings on Vercel, under Environment Variables, add VITE_FINNHUB_KEY with your Finnhub key, SEC_CONTACT_EMAIL with your email, and for the AI brain add GEMINI_API_KEY with your free Gemini key or ANTHROPIC_API_KEY with your paid Anthropic key, or both to get free first with paid backup.
+3. In the project settings on Vercel, under Environment Variables, add VITE_FINNHUB_KEY with your Finnhub key, SEC_CONTACT_EMAIL with your email, ALPHAVANTAGE_API_KEY with your free Alpha Vantage key for the earnings calendar, and for the AI brain add GEMINI_API_KEY with your free Gemini key or ANTHROPIC_API_KEY with your paid Anthropic key, or both to get free first with paid backup.
 4. Deploy. Your app will be live at the URL Vercel gives you, and the Anthropic key stays server side.
 
 ## The four modes
