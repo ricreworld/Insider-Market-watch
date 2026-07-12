@@ -1319,35 +1319,35 @@ export default function MarketPulse() {
 
           <div className="mt-4 flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => setTab("pulse")}
+              onClick={() => { setTab("pulse"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "pulse" ? "rgba(245,198,100,0.14)" : "transparent", border: `1px solid ${tab === "pulse" ? C.gold : C.line}`, color: tab === "pulse" ? C.gold : C.dim, cursor: "pointer" }}
             >
               Market events
             </button>
             <button
-              onClick={() => setTab("diamonds")}
+              onClick={() => { setTab("diamonds"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "diamonds" ? "rgba(176,143,232,0.14)" : "transparent", border: `1px solid ${tab === "diamonds" ? C.violet : C.line}`, color: tab === "diamonds" ? C.violet : C.dim, cursor: "pointer" }}
             >
               Diamond scanner
             </button>
             <button
-              onClick={() => setTab("brief")}
+              onClick={() => { setTab("brief"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "brief" ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${tab === "brief" ? C.soon : C.line}`, color: tab === "brief" ? C.soon : C.dim, cursor: "pointer" }}
             >
               Daily brief
             </button>
             <button
-              onClick={() => { setTab("wire"); if (wire.length === 0 && !wireLoading) { loadWire(); loadBuzz(); } }}
+              onClick={() => { setTab("wire"); setError(""); if (wire.length === 0 && !wireLoading) { loadWire(); loadBuzz(); } }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "wire" ? "rgba(123,201,143,0.14)" : "transparent", border: `1px solid ${tab === "wire" ? C.green : C.line}`, color: tab === "wire" ? C.green : C.dim, cursor: "pointer" }}
             >
               Live wire
             </button>
             <button
-              onClick={() => setTab("history")}
+              onClick={() => { setTab("history"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "history" ? "rgba(139,147,167,0.14)" : "transparent", border: `1px solid ${tab === "history" ? C.text : C.line}`, color: tab === "history" ? C.text : C.dim, cursor: "pointer" }}
             >
