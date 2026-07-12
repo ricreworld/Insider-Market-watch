@@ -735,6 +735,90 @@ function Watcher({ watch, onExplain, explaining }) {
   );
 }
 
+// ---------- The Playbook, a transit-map infographic of the four routes ----------
+
+const ROUTES = [
+  {
+    name: "MORNING", time: "2 min", color: C.gold, y: 64,
+    stops: [
+      ["Open the app", "auto brief can fire"],
+      ["Daily brief", "mood, themes, your tickers"],
+      ["Skim the wire", "movers, buzz, earnings"],
+      ["Star what matters", "one tap builds your list"],
+    ],
+  },
+  {
+    name: "THE HUNT", time: "15 min", color: C.green, y: 168,
+    stops: [
+      ["Refresh the wire", "raw filings, minutes old"],
+      ["Find the movers", "the brain kills the noise"],
+      ["Cross check", "buzz + earnings + puts"],
+      ["Deep dive", "full report on the survivor"],
+    ],
+  },
+  {
+    name: "THE GUARD", time: "all day", color: C.soon, y: 272,
+    stops: [
+      ["Start the watcher", "live prices on your stars"],
+      ["Allow notifications", "one tap, once"],
+      ["Alert fires", "1.5% in 5 min or 4x volume"],
+      ["Explain this move", "the why, in seconds"],
+    ],
+  },
+  {
+    name: "THE REVIEW", time: "friday", color: C.violet, y: 376,
+    stops: [
+      ["Open History", "the last forty runs"],
+      ["Spot what was early", "and what was noise"],
+      ["Sharpen the list", "unstar the dead weight"],
+    ],
+  },
+];
+
+function Playbook({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <section className="mb-5 rounded-lg p-4" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+        <p className="text-xs" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "2px" }}>
+          THE PLAYBOOK {"·"} HOW TO RUN THIS MACHINE
+        </p>
+        <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: C.dim, border: `1px solid ${C.line}`, background: "transparent", cursor: "pointer" }}>
+          Close
+        </button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <svg viewBox="0 0 740 424" width="100%" style={{ minWidth: 620, display: "block" }}>
+          {ROUTES.map((route) => {
+            const n = route.stops.length;
+            const xs = route.stops.map((_, i) => 170 + i * (510 / (n - 1)));
+            return (
+              <g key={route.name}>
+                <line x1="140" y1={route.y} x2="714" y2={route.y} stroke={route.color} strokeWidth="3" opacity="0.5" />
+                <path d={`M 706 ${route.y - 5} L 718 ${route.y} L 706 ${route.y + 5}`} fill="none" stroke={route.color} strokeWidth="3" opacity="0.5" />
+                <rect x="0" y={route.y - 17} width="128" height="34" rx="17" fill={C.panel} stroke={route.color} />
+                <text x="64" y={route.y - 3} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{route.name}</text>
+                <text x="64" y={route.y + 10} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="'IBM Plex Mono', monospace">{route.time}</text>
+                {route.stops.map(([name, sub], i) => (
+                  <g key={i}>
+                    <circle cx={xs[i]} cy={route.y} r="10" fill={C.bg} stroke={route.color} strokeWidth="2.5" />
+                    <text x={xs[i]} y={route.y + 3.5} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{i + 1}</text>
+                    <text x={xs[i]} y={route.y - 20} textAnchor="middle" fontSize="10.5" fontWeight="600" fill={C.text}>{name}</text>
+                    <text x={xs[i]} y={route.y + 26} textAnchor="middle" fontSize="8.5" fill={C.dim}>{sub}</text>
+                  </g>
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <p className="text-xs mt-1 leading-relaxed" style={{ color: C.dim }}>
+        Four routes, never all in one day. Morning with coffee. The hunt when you have time. The guard runs itself while you live your life. The review keeps you honest. One signal is a rumor, two signals crossing is a lead.
+      </p>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 export default function MarketPulse() {
@@ -776,6 +860,7 @@ export default function MarketPulse() {
   const [history, setHistory] = useState([]);
   const [autoBrief, setAutoBrief] = useState("off");
   const [autoBriefPending, setAutoBriefPending] = useState(false);
+  const [showPlaybook, setShowPlaybook] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -791,6 +876,9 @@ export default function MarketPulse() {
           setNote(parsed.note || "");
           setLastRun(parsed.at || null);
           setScope(parsed.scope || "market");
+        } else {
+          // First visit: open the playbook so the routes explain themselves.
+          setShowPlaybook(true);
         }
       } catch (e) {}
       try {
@@ -1115,24 +1203,58 @@ export default function MarketPulse() {
   const busyLines = diamondLoading ? DIAMOND_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
 
   return (
-    <div className="min-h-screen" style={{ background: C.bg, color: C.text }}>
+    <div
+      className="min-h-screen mp-bg"
+      style={{
+        background: `radial-gradient(1100px 500px at 85% -10%, rgba(245,198,100,0.08), transparent 60%),
+          radial-gradient(900px 520px at -10% 25%, rgba(95,178,232,0.07), transparent 60%),
+          radial-gradient(760px 420px at 50% 115%, rgba(176,143,232,0.06), transparent 60%),
+          ${C.bg}`,
+        color: C.text,
+      }}
+    >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;900&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
         body { margin: 0; }
         * { box-sizing: border-box; }
         button:focus-visible, input:focus-visible { outline: 2px solid ${C.gold}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes pulseDot { 0%,100% { opacity: 0.3 } 50% { opacity: 1 } }
+        .mp-bg { position: relative; }
+        .mp-bg::before {
+          content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+          background-image: linear-gradient(rgba(233,230,219,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(233,230,219,0.03) 1px, transparent 1px);
+          background-size: 44px 44px;
+          -webkit-mask-image: radial-gradient(1000px 640px at 50% 0%, black, transparent 72%);
+          mask-image: radial-gradient(1000px 640px at 50% 0%, black, transparent 72%);
+        }
+        .mp-bg > div { position: relative; z-index: 1; }
+        .rounded-lg { box-shadow: 0 14px 34px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03); }
+        button:not(:disabled) { transition: filter .15s ease, border-color .15s ease, background .15s ease; }
+        button:not(:disabled):hover { filter: brightness(1.14); }
       `}</style>
 
       <div className="max-w-3xl mx-auto px-4 py-6" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <header className="mb-5">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <h1 className="text-2xl tracking-tight" style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, letterSpacing: "-0.02em" }}>
+              <p className="text-xs mb-1" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "3px" }}>THE LEGAL INSIDE SCOOP</p>
+              <h1
+                className="text-3xl tracking-tight"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 900,
+                  letterSpacing: "-0.03em",
+                  lineHeight: 1.05,
+                  backgroundImage: `linear-gradient(100deg, ${C.text} 10%, ${C.gold} 60%, ${C.violet} 110%)`,
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  color: "transparent",
+                }}
+              >
                 Market Pulse
               </h1>
-              <p className="text-sm mt-0.5" style={{ color: C.dim }}>Events first, then the stocks they touch</p>
+              <p className="text-sm mt-1" style={{ color: C.dim }}>Public information, read seconds after it lands. Events first, then the stocks they touch.</p>
             </div>
             {tab === "pulse" ? (
               <button
@@ -1173,38 +1295,60 @@ export default function MarketPulse() {
             ) : null}
           </div>
 
+          <div className="mt-3 flex items-center gap-x-4 gap-y-1 flex-wrap text-xs" style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.dim }}>
+            {[
+              ["SEC WIRE", C.soon],
+              ["INSIDER TAPE", C.violet],
+              ["CROWD BUZZ", C.gold],
+              ["OPTIONS BETS", C.red],
+              ["LIVE PRICES", C.green],
+            ].map(([label, color]) => (
+              <span key={label} className="flex items-center gap-1.5">
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, display: "inline-block", animation: "pulseDot 2.6s ease-in-out infinite" }} />
+                {label}
+              </span>
+            ))}
+            <button
+              onClick={() => setShowPlaybook(!showPlaybook)}
+              className="text-xs px-2.5 py-1 rounded-full ml-auto"
+              style={{ border: `1px solid ${showPlaybook ? C.gold : C.line}`, color: showPlaybook ? C.gold : C.dim, background: showPlaybook ? "rgba(245,198,100,0.08)" : "transparent", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "1px" }}
+            >
+              THE PLAYBOOK
+            </button>
+          </div>
+
           <div className="mt-4 flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setTab("pulse")}
-              className="px-3 py-1.5 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "pulse" ? "rgba(245,198,100,0.14)" : "transparent", border: `1px solid ${tab === "pulse" ? C.gold : C.line}`, color: tab === "pulse" ? C.gold : C.dim, cursor: "pointer" }}
             >
               Market events
             </button>
             <button
               onClick={() => setTab("diamonds")}
-              className="px-3 py-1.5 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "diamonds" ? "rgba(176,143,232,0.14)" : "transparent", border: `1px solid ${tab === "diamonds" ? C.violet : C.line}`, color: tab === "diamonds" ? C.violet : C.dim, cursor: "pointer" }}
             >
               Diamond scanner
             </button>
             <button
               onClick={() => setTab("brief")}
-              className="px-3 py-1.5 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "brief" ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${tab === "brief" ? C.soon : C.line}`, color: tab === "brief" ? C.soon : C.dim, cursor: "pointer" }}
             >
               Daily brief
             </button>
             <button
               onClick={() => { setTab("wire"); if (wire.length === 0 && !wireLoading) { loadWire(); loadBuzz(); } }}
-              className="px-3 py-1.5 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "wire" ? "rgba(123,201,143,0.14)" : "transparent", border: `1px solid ${tab === "wire" ? C.green : C.line}`, color: tab === "wire" ? C.green : C.dim, cursor: "pointer" }}
             >
               Live wire
             </button>
             <button
               onClick={() => setTab("history")}
-              className="px-3 py-1.5 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "history" ? "rgba(139,147,167,0.14)" : "transparent", border: `1px solid ${tab === "history" ? C.text : C.line}`, color: tab === "history" ? C.text : C.dim, cursor: "pointer" }}
             >
               History
@@ -1214,7 +1358,7 @@ export default function MarketPulse() {
                 <button
                   key={k}
                   onClick={() => setScope(k)}
-                  className="px-3 py-1.5 rounded-md text-sm"
+                  className="px-3 py-1.5 rounded-full text-sm"
                   style={{ background: scope === k ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${scope === k ? C.soon : C.line}`, color: scope === k ? C.soon : C.dim, cursor: "pointer" }}
                 >
                   {v.label}
@@ -1227,6 +1371,8 @@ export default function MarketPulse() {
             )}
           </div>
         </header>
+
+        <Playbook open={showPlaybook} onClose={() => setShowPlaybook(false)} />
 
         {watch.length > 0 && (
           <section className="mb-5 rounded-lg p-3" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
@@ -1878,6 +2024,9 @@ export default function MarketPulse() {
         )}
 
         <footer className="mt-8 pt-4 text-xs leading-relaxed" style={{ borderTop: `1px solid ${C.line}`, color: C.dim }}>
+          <p className="mb-1" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: "2px" }}>
+            MARKET PULSE {"·"} THE LEGAL INSIDE SCOOP
+          </p>
           Signals and research scorecards only. Not investment advice, no price predictions, no buy sell or hold recommendations. Sub $5 stocks can lose most of their value fast. Free sources lag real events by minutes to hours.
         </footer>
       </div>
