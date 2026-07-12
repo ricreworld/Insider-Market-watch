@@ -776,46 +776,56 @@ const ROUTES = [
 ];
 
 function Playbook({ open, onClose }) {
-  if (!open) return null;
+  // Always mounted. The wrapper animates between collapsed and revealed,
+  // and reopening restarts the line-draw and station-pop animations.
   return (
-    <section className="mb-5 rounded-lg p-4" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
-      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-        <p className="text-xs" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "2px" }}>
-          THE PLAYBOOK {"·"} HOW TO RUN THIS MACHINE
-        </p>
-        <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: C.dim, border: `1px solid ${C.line}`, background: "transparent", cursor: "pointer" }}>
-          Close
-        </button>
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <svg viewBox="0 0 740 424" width="100%" style={{ minWidth: 620, display: "block" }}>
-          {ROUTES.map((route) => {
-            const n = route.stops.length;
-            const xs = route.stops.map((_, i) => 170 + i * (510 / (n - 1)));
-            return (
-              <g key={route.name}>
-                <line x1="140" y1={route.y} x2="714" y2={route.y} stroke={route.color} strokeWidth="3" opacity="0.5" />
-                <path d={`M 706 ${route.y - 5} L 718 ${route.y} L 706 ${route.y + 5}`} fill="none" stroke={route.color} strokeWidth="3" opacity="0.5" />
-                <rect x="0" y={route.y - 17} width="128" height="34" rx="17" fill={C.panel} stroke={route.color} />
-                <text x="64" y={route.y - 3} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{route.name}</text>
-                <text x="64" y={route.y + 10} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="'IBM Plex Mono', monospace">{route.time}</text>
-                {route.stops.map(([name, sub], i) => (
-                  <g key={i}>
-                    <circle cx={xs[i]} cy={route.y} r="10" fill={C.bg} stroke={route.color} strokeWidth="2.5" />
-                    <text x={xs[i]} y={route.y + 3.5} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{i + 1}</text>
-                    <text x={xs[i]} y={route.y - 20} textAnchor="middle" fontSize="10.5" fontWeight="600" fill={C.text}>{name}</text>
-                    <text x={xs[i]} y={route.y + 26} textAnchor="middle" fontSize="8.5" fill={C.dim}>{sub}</text>
+    <div className={`pb-wrap ${open ? "pb-open" : ""}`} aria-hidden={!open}>
+      <div className="pb-inner">
+        <section className="mb-5 rounded-lg p-4" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+          <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+            <p className="text-xs" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "2px" }}>
+              THE PLAYBOOK {"·"} HOW TO RUN THIS MACHINE
+            </p>
+            <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: C.dim, border: `1px solid ${C.line}`, background: "transparent", cursor: "pointer" }}>
+              Close
+            </button>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <svg viewBox="0 0 740 424" width="100%" style={{ minWidth: 620, display: "block" }}>
+              {ROUTES.map((route, r) => {
+                const n = route.stops.length;
+                const xs = route.stops.map((_, i) => 170 + i * (510 / (n - 1)));
+                const routeDelay = 0.15 + r * 0.22;
+                return (
+                  <g key={route.name}>
+                    <line className="pb-line" x1="140" y1={route.y} x2="714" y2={route.y} stroke={route.color} strokeWidth="3" opacity="0.5" style={{ animationDelay: `${routeDelay}s` }} />
+                    <g className="pb-stop" style={{ animationDelay: `${routeDelay + 0.75}s` }}>
+                      <path d={`M 706 ${route.y - 5} L 718 ${route.y} L 706 ${route.y + 5}`} fill="none" stroke={route.color} strokeWidth="3" opacity="0.5" />
+                    </g>
+                    <g className="pb-stop" style={{ animationDelay: `${routeDelay}s` }}>
+                      <rect x="0" y={route.y - 17} width="128" height="34" rx="17" fill={C.panel} stroke={route.color} />
+                      <text x="64" y={route.y - 3} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{route.name}</text>
+                      <text x="64" y={route.y + 10} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="'IBM Plex Mono', monospace">{route.time}</text>
+                    </g>
+                    {route.stops.map(([name, sub], i) => (
+                      <g key={i} className="pb-stop" style={{ animationDelay: `${routeDelay + 0.15 + i * 0.16}s` }}>
+                        <circle cx={xs[i]} cy={route.y} r="10" fill={C.bg} stroke={route.color} strokeWidth="2.5" />
+                        <text x={xs[i]} y={route.y + 3.5} textAnchor="middle" fontSize="10" fontWeight="700" fill={route.color} fontFamily="'IBM Plex Mono', monospace">{i + 1}</text>
+                        <text x={xs[i]} y={route.y - 20} textAnchor="middle" fontSize="10.5" fontWeight="600" fill={C.text}>{name}</text>
+                        <text x={xs[i]} y={route.y + 26} textAnchor="middle" fontSize="8.5" fill={C.dim}>{sub}</text>
+                      </g>
+                    ))}
                   </g>
-                ))}
-              </g>
-            );
-          })}
-        </svg>
+                );
+              })}
+            </svg>
+          </div>
+          <p className="text-xs mt-1 leading-relaxed pb-stop" style={{ color: C.dim, animationDelay: "1.5s" }}>
+            Four routes, never all in one day. Morning with coffee. The hunt when you have time. The guard runs itself while you live your life. The review keeps you honest. One signal is a rumor, two signals crossing is a lead.
+          </p>
+        </section>
       </div>
-      <p className="text-xs mt-1 leading-relaxed" style={{ color: C.dim }}>
-        Four routes, never all in one day. Morning with coffee. The hunt when you have time. The guard runs itself while you live your life. The review keeps you honest. One signal is a rumor, two signals crossing is a lead.
-      </p>
-    </section>
+    </div>
   );
 }
 
@@ -1232,6 +1242,21 @@ export default function MarketPulse() {
         .rounded-lg { box-shadow: 0 14px 34px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03); }
         button:not(:disabled) { transition: filter .15s ease, border-color .15s ease, background .15s ease; }
         button:not(:disabled):hover { filter: brightness(1.14); }
+        .pb-wrap {
+          display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+          transition: grid-template-rows .55s cubic-bezier(.22,1,.36,1), opacity .4s ease, visibility 0s linear .55s;
+        }
+        .pb-wrap.pb-open {
+          grid-template-rows: 1fr; opacity: 1; visibility: visible;
+          transition: grid-template-rows .55s cubic-bezier(.22,1,.36,1), opacity .45s ease .1s, visibility 0s;
+        }
+        .pb-inner { overflow: hidden; min-height: 0; }
+        .pb-line { stroke-dasharray: 600; stroke-dashoffset: 600; }
+        .pb-open .pb-line { animation: pbDraw .9s cubic-bezier(.4,0,.2,1) forwards; }
+        @keyframes pbDraw { to { stroke-dashoffset: 0; } }
+        .pb-stop { opacity: 0; transform: scale(.6); transform-origin: center; transform-box: fill-box; }
+        .pb-open .pb-stop { animation: pbPop .45s cubic-bezier(.34,1.56,.64,1) forwards; }
+        @keyframes pbPop { to { opacity: 1; transform: scale(1); } }
       `}</style>
 
       <div className="max-w-3xl mx-auto px-4 py-6" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
