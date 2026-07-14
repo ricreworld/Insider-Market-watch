@@ -702,13 +702,20 @@ function Watcher({ watch, onExplain, explaining }) {
         </div>
       )}
 
-      {status === "live" && Object.keys(prices).length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {watch.map((w) => (
-            <span key={w.ticker} className="text-xs px-2 py-1 rounded" style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
-              {w.ticker} {prices[w.ticker] ? `$${prices[w.ticker].toFixed(2)}` : "waiting..."}
-            </span>
-          ))}
+      {status === "live" && (
+        <div className="mt-3">
+          <div className="flex flex-wrap gap-2">
+            {watch.map((w) => (
+              <span key={w.ticker} className="text-xs px-2 py-1 rounded" style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
+                {w.ticker} {prices[w.ticker] ? `$${prices[w.ticker].toFixed(2)}` : "waiting for a trade..."}
+              </span>
+            ))}
+          </div>
+          {Object.keys(prices).length === 0 && (
+            <p className="text-xs mt-2" style={{ color: C.dim }}>
+              Connected. Prices show up the moment a real trade happens on one of these tickers. During US market hours that is usually seconds; outside market hours it can stay quiet until the next session opens.
+            </p>
+          )}
         </div>
       )}
 
