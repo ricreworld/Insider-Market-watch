@@ -188,28 +188,33 @@ Respond with ONLY valid JSON, no markdown, no preamble. At most 3 candidates, ev
 }
 
 // Mode nine, dip scanner. The ZTS pattern, broadened: any size, any
-// price, an established company that has fallen hard from a recent
-// high. The whole point is separating a real buying opportunity, a
-// temporary overreaction, from a stock that is cheap because it is
-// actually broken. Read the mechanism, not the price.
-function dipPrompt(dateStr) {
+// price, an established company that has fallen hard from a recent high.
+// The drawdown numbers are already measured for real from live price
+// data, so the AI never guesses which stocks fell or by how much. Its
+// only job is reading WHY each one fell and whether the drop is an
+// overreaction to something fixable or a structural break that justifies
+// the lower price.
+function dipPrompt(dateStr, fallen) {
+  const list = fallen
+    .map((d) => `${d.ticker} (${d.name}): now about $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off its 52-week high of $${d.high.toFixed(2)}${d.marketCap ? `, market cap ${d.marketCap}` : ""}.`)
+    .join("\n");
   return `${BRIEF}
 
-Mode nine, dip scanner. Today is ${dateStr}. Look for established, well known US-listed companies, any price, any market cap, that have dropped meaningfully, roughly 15 percent or more, from a recent high within the last few months.
+Mode nine, dip scanner. Today is ${dateStr}. Below is a list of established companies with REAL, already-measured drawdowns off their 52-week highs. The prices and percentages are facts from live market data, do not change them, do not add tickers.
 
-Search the web for stocks currently well off a recent high with a clear, verifiable reason for the drop: an earnings miss, a failed trial or study, a guidance cut, a lawsuit, a regulatory setback, a sector wide selloff, a single bad data point. Prioritize companies a smart friend would recognize, not obscure microcaps, that is what the diamond scanner already covers.
+${list}
 
-For each candidate:
-1. State the real reason it fell, verified with a source, never invented.
-2. Judge whether the drop reads as an overreaction to a fixable, temporary problem, or a structural change to the business that justifies a lower price. Mark "unclear" honestly when the evidence is mixed.
-3. Note whether the market has kept selling since, or whether it has stabilized, since a falling knife is a different thing than a stock that already found a floor.
-4. State the single biggest risk if the read is wrong.
+For each ticker, search the web for the real reason it has fallen and read the situation:
+1. why: the actual, verifiable reason for the decline (earnings miss, guidance cut, failed trial, lawsuit, sector selloff, secular decline). Never invent. If you cannot find a clear reason, say "no single clear catalyst, broad de-rating".
+2. read: is the drop an overreaction to a fixable, temporary problem, or a structural change that justifies the lower price, or genuinely unclear. Be honest with unclear.
+3. stabilized: has it kept falling recently, or found a floor. yes means stabilized, no means still falling, unclear if you cannot tell.
+4. risk: the single biggest risk if your read is wrong.
 
-This is not investment advice, never a buy or sell call, only a research read on why the price moved and whether the reaction fits the news.
+Never a buy, sell, or hold call. Only a research read on why the price moved and whether the reaction fits the news.
 
-Respond with ONLY valid JSON, no markdown, no preamble. At most 4 candidates, every text field under 20 words.
+Respond with ONLY valid JSON, no markdown, no preamble. One entry per ticker above, every text field under 20 words.
 
-{"dips":[{"name":"Company","ticker":"TICK","price":"about $135","high":"down from about $160 in May 2026","dropPct":"about 16%","why":"the real, verified reason it fell","read":"overreaction|structural|unclear","stabilized":"yes|no|unclear","risk":"the single biggest risk if this read is wrong","source":"where verified"}],"note":"if nothing clean was found, say so plainly, else empty string"}`;
+{"reads":[{"ticker":"TICK","why":"the real verified reason it fell","read":"overreaction|structural|unclear","stabilized":"yes|no|unclear","risk":"the single biggest risk if this read is wrong","source":"where verified"}],"note":""}`;
 }
 
 function focusPrompt(name, ticker, dateStr, moveContext) {
@@ -340,6 +345,15 @@ Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 2
 {"tickers":["TICK"],"gist":"plain one line restatement","sentiment":"bullish|bearish|mixed","playType":"calls|puts|shares|none","strike":"like $90, or empty string","expiry":"like 1/27, or empty string","note":"only if nothing usable was in the text, else empty string"}`;
 }
 
+function fmtMarketCap(v) {
+  if (!v || typeof v !== "number") return "";
+  const a = Math.abs(v);
+  if (a >= 1e12) return `$${(v / 1e12).toFixed(2)}T cap`;
+  if (a >= 1e9) return `$${(v / 1e9).toFixed(1)}B cap`;
+  if (a >= 1e6) return `$${(v / 1e6).toFixed(0)}M cap`;
+  return `$${v.toFixed(0)} cap`;
+}
+
 function fmtAge(iso) {
   if (!iso) return "";
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -398,6 +412,8 @@ function extractJson(text) {
   if (picks) return { picks, note: "" };
   const dips = salvageArray(clean, "dips");
   if (dips) return { dips, note: "" };
+  const reads = salvageArray(clean, "reads");
+  if (reads) return { reads, note: "" };
   throw new Error("unparseable json");
 }
 
@@ -587,42 +603,55 @@ function DiamondCard({ cand, watch, onToggle }) {
 }
 
 function DipCard({ cand, watch, onToggle }) {
-  const read = READS[cand.read] || READS.unclear;
+  // cand carries REAL measured numbers (price, high, drawdownPct, marketCap)
+  // plus, once the AI read runs, why/read/stabilized/risk/source.
+  const read = READS[cand.read] || (cand.read ? READS.unclear : null);
+  const barColor = read ? read.color : C.urgent;
+  const bounced = cand.offLowPct != null && cand.offLowPct >= 30;
   return (
-    <div className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${read.color}` }}>
-      <div style={{ width: 4, background: read.color, flexShrink: 0 }} />
+    <div className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${barColor}` }}>
+      <div style={{ width: 4, background: barColor, flexShrink: 0 }} />
       <div className="flex-1 p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             <TickerChip company={cand} starred={watch.some((w) => w.ticker === cand.ticker)} onToggle={onToggle} />
             <span className="text-sm" style={{ color: C.text, fontWeight: 600 }}>{cand.name}</span>
-            <span className="text-sm" style={{ color: C.urgent, fontFamily: "'IBM Plex Mono', monospace" }}>{cand.price}</span>
+            <span className="text-sm" style={{ color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${cand.price.toFixed(2)}</span>
           </div>
-          <span className="text-xs px-2 py-1 rounded" style={{ color: read.color, border: `1px solid ${read.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
-            {read.label}
+          <span className="text-sm px-2 py-1 rounded" style={{ color: C.urgent, border: `1px solid ${C.urgent}`, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
+            -{cand.drawdownPct.toFixed(0)}% off high
           </span>
         </div>
 
-        <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
-          <span style={{ color: C.dim }}>{cand.high} </span>
-          <span style={{ color: C.urgent, fontFamily: "'IBM Plex Mono', monospace" }}>({cand.dropPct})</span>
-        </p>
-        <p className="mt-1 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.85 }}>
-          <span style={{ color: C.dim }}>Why it fell: </span>{cand.why}
+        <p className="mt-2 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+          52wk high ${cand.high.toFixed(2)}
+          {cand.marketCap ? ` · ${cand.marketCap}` : ""}
+          {bounced ? ` · already +${cand.offLowPct.toFixed(0)}% off its low` : ""}
         </p>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <span className="text-xs px-2 py-1 rounded-md" style={{ border: `1px solid ${C.line}`, color: C.dim }}>
-            Since then: {cand.stabilized === "yes" ? "stabilized" : cand.stabilized === "no" ? "still falling" : "unclear"}
-          </span>
-        </div>
-
-        <p className="mt-3 text-sm" style={{ color: C.red, opacity: 0.9 }}>
-          <span style={{ color: C.dim }}>Biggest risk if this read is wrong: </span>{cand.risk}
-        </p>
-        <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-          Verified via {cand.source}
-        </p>
+        {read ? (
+          <>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: read.color, border: `1px solid ${read.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                {read.label}
+              </span>
+              <span className="text-xs px-2 py-0.5 rounded" style={{ border: `1px solid ${C.line}`, color: C.dim }}>
+                Since then: {cand.stabilized === "yes" ? "stabilized" : cand.stabilized === "no" ? "still falling" : "unclear"}
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
+              <span style={{ color: C.dim }}>Why it fell: </span>{cand.why}
+            </p>
+            <p className="mt-2 text-sm" style={{ color: C.red, opacity: 0.9 }}>
+              <span style={{ color: C.dim }}>Biggest risk if this read is wrong: </span>{cand.risk}
+            </p>
+            {cand.source && (
+              <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Read verified via {cand.source}</p>
+            )}
+          </>
+        ) : (
+          <p className="mt-3 text-xs" style={{ color: C.dim }}>Real drawdown measured from live prices. The read on why it fell is loading...</p>
+        )}
       </div>
     </div>
   );
@@ -1037,9 +1066,12 @@ export default function MarketPulse() {
         const dp = await storage.get("pulse-dips");
         if (dp) {
           const parsed = JSON.parse(dp.value);
-          setDips(parsed.dips || []);
-          setDipsNote(parsed.note || "");
-          setDipsRun(parsed.at || null);
+          // Only restore entries in the new numeric shape; older cached
+          // dips stored price/drawdown as strings and would break the card.
+          const valid = (parsed.dips || []).filter((d) => typeof d.price === "number" && typeof d.drawdownPct === "number");
+          setDips(valid);
+          setDipsNote(valid.length ? (parsed.note || "") : "");
+          setDipsRun(valid.length ? (parsed.at || null) : null);
         }
       } catch (e) {}
       try {
@@ -1188,19 +1220,49 @@ export default function MarketPulse() {
     setError("");
     setLoadLine(0);
     try {
-      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const result = await callClaude(dipPrompt(dateStr), 2, 1400);
+      // Step 1: real, measured drawdowns from live price data. This works
+      // with zero AI cost and never fabricates a stock or a number.
+      const extra = watch.map((w) => w.ticker).join(",");
+      const r = await fetch(`/api/dips${extra ? `?extra=${encodeURIComponent(extra)}` : ""}`);
+      const screen = await r.json();
+      const fallen = (screen.candidates || []).map((c) => ({
+        ...c,
+        marketCap: c.fundamentals && c.fundamentals.marketCap ? fmtMarketCap(c.fundamentals.marketCap) : "",
+      }));
       const at = new Date().toLocaleString();
-      const found = result.dips || [];
-      setDips(found);
-      setDipsNote(result.note || "");
+      // Show the real screen immediately, before spending anything on AI.
+      setDips(fallen);
+      setDipsNote(screen.note || "");
       setDipsRun(at);
+      if (fallen.length === 0) {
+        setDipsLoading(false);
+        return;
+      }
+
+      // Step 2: enrich with the AI read on why each one fell. If this
+      // fails or no brain is configured, the real screen still stands.
       try {
-        await storage.set("pulse-dips", JSON.stringify({ dips: found, note: result.note || "", at }));
-      } catch (e) {}
-      addHistory("dips", found.map((d) => `${d.ticker} ${d.price}: ${d.high} (${d.dropPct}), ${d.why}`));
+        const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+        const result = await callClaude(dipPrompt(dateStr, fallen), 2, 1600);
+        const byTicker = {};
+        (result.reads || []).forEach((rd) => { if (rd.ticker) byTicker[rd.ticker.toUpperCase()] = rd; });
+        const merged = fallen.map((c) => {
+          const rd = byTicker[c.ticker.toUpperCase()];
+          return rd ? { ...c, why: rd.why, read: rd.read, stabilized: rd.stabilized, risk: rd.risk, source: rd.source } : c;
+        });
+        setDips(merged);
+        try {
+          await storage.set("pulse-dips", JSON.stringify({ dips: merged, note: "", at }));
+        } catch (e) {}
+        addHistory("dips", merged.map((d) => `${d.ticker} $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off high${d.why ? `: ${d.why}` : ""}`));
+      } catch (e) {
+        // Keep the real screen; just note the read layer was skipped.
+        try { await storage.set("pulse-dips", JSON.stringify({ dips: fallen, note: "", at })); } catch (er) {}
+        addHistory("dips", fallen.map((d) => `${d.ticker} $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off 52wk high`));
+        if (e.fatal) setError(`${e.message} The real drawdown screen below still works with no key.`);
+      }
     } catch (e) {
-      setError(e.fatal ? e.message : "The dip hunt did not come back clean, even after a retry. Run it again.");
+      setError("Could not reach the price data source for the dip screen. Try again in a moment.");
     }
     setDipsLoading(false);
   }
@@ -1910,12 +1972,12 @@ export default function MarketPulse() {
           <>
             <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(255,138,61,0.06)", border: `1px solid ${C.urgent}`, color: C.dim }}>
               <span style={{ color: C.urgent }}>How this works: </span>
-              the ZTS pattern, broadened. Established, well known companies, any price, down 15 percent or more from a recent high. The whole question for each one is whether the drop reads as an overreaction to something fixable, or a structural change that actually justifies a lower price. A big name being cheap is not automatically an opportunity, sometimes the market is right.
+              the ZTS pattern, with real numbers. It measures the actual drawdown off the 52-week high for a universe of established names from live price data, then keeps the ones down 20 percent or more. Your starred tickers are checked too. For each survivor, the read on why it fell, and whether that drop looks like an overreaction to something fixable or a structural change that justifies the lower price. A big name being cheap is not automatically an opportunity, sometimes the market is right.
             </div>
             {!dipsLoading && dips.length === 0 && !dipsNote && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
                 <p className="text-base" style={{ color: C.text }}>No hunt yet.</p>
-                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for dips. It searches for established stocks down big from a recent high and reads whether the drop is overreaction or real.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for dips. It measures real drawdowns off 52-week highs for established names, keeps the ones down big, and reads whether each drop is overreaction or real.</p>
               </div>
             )}
             {!dipsLoading && dipsNote && dips.length === 0 && (
