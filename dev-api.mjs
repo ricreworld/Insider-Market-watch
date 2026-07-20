@@ -9,6 +9,7 @@ import wireHandler from "./api/wire.js";
 import buzzHandler from "./api/buzz.js";
 import putsHandler from "./api/puts.js";
 import dipsHandler from "./api/dips.js";
+import insiderHandler from "./api/insider.js";
 
 const PORT = 3001;
 
@@ -41,6 +42,11 @@ const server = http.createServer(async (req, res) => {
 
   if ((req.url || "").split("?")[0] === "/api/dips") {
     await dipsHandler(req, res);
+    return;
+  }
+
+  if ((req.url || "").split("?")[0] === "/api/insider") {
+    await insiderHandler(req, res);
     return;
   }
 
