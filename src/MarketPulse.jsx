@@ -75,12 +75,20 @@ const HIST = {
   movers: { label: "Wire movers", color: "#7BC98F" },
   puts: { label: "Put pressure", color: "#E06C5F" },
   tip: { label: "Grapevine tip", color: "#F5C664" },
+  dips: { label: "Dip hunt", color: "#FF8A3D" },
 };
 
 const SENTIMENT = {
   bullish: { label: "Bullish", color: "#7BC98F", mark: "↑" },
   bearish: { label: "Bearish", color: "#E06C5F", mark: "↓" },
   mixed: { label: "Mixed", color: "#8B93A7", mark: "→" },
+};
+
+// How a big drawdown in an established stock reads: temporary versus real.
+const READS = {
+  overreaction: { label: "Looks like overreaction", color: "#7BC98F" },
+  structural: { label: "Looks structural", color: "#E06C5F" },
+  unclear: { label: "Genuinely unclear", color: "#8B93A7" },
 };
 
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
@@ -107,6 +115,14 @@ const DIAMOND_LINES = [
   "Checking cash runway and dilution history...",
   "Looking for insider buying in SEC filings...",
   "Killing the trap stocks, keeping candidates...",
+  "Building scorecards, almost done...",
+];
+
+const DIP_LINES = [
+  "Looking for established names down big from their highs...",
+  "Reading why each one actually fell...",
+  "Separating overreaction from real deterioration...",
+  "Checking whether the drop already priced in the damage...",
   "Building scorecards, almost done...",
 ];
 
@@ -169,6 +185,31 @@ Be honest with unknown. Never mark pass without evidence. This is not investment
 Respond with ONLY valid JSON, no markdown, no preamble. At most 3 candidates, every text field under 20 words.
 
 {"candidates":[{"name":"Company","ticker":"TICK","price":"about $1.20","catalyst":"what the event is","date":"when, like mid Aug 2026","checks":{"catalyst":"pass|fail|unknown","cash":"pass|fail|unknown","insiders":"pass|fail|unknown","dilution":"pass|fail|unknown"},"risk":"the single biggest risk in one line","source":"where verified"}],"note":"if no clean candidates found, say so plainly, else empty string"}`;
+}
+
+// Mode nine, dip scanner. The ZTS pattern, broadened: any size, any
+// price, an established company that has fallen hard from a recent
+// high. The whole point is separating a real buying opportunity, a
+// temporary overreaction, from a stock that is cheap because it is
+// actually broken. Read the mechanism, not the price.
+function dipPrompt(dateStr) {
+  return `${BRIEF}
+
+Mode nine, dip scanner. Today is ${dateStr}. Look for established, well known US-listed companies, any price, any market cap, that have dropped meaningfully, roughly 15 percent or more, from a recent high within the last few months.
+
+Search the web for stocks currently well off a recent high with a clear, verifiable reason for the drop: an earnings miss, a failed trial or study, a guidance cut, a lawsuit, a regulatory setback, a sector wide selloff, a single bad data point. Prioritize companies a smart friend would recognize, not obscure microcaps, that is what the diamond scanner already covers.
+
+For each candidate:
+1. State the real reason it fell, verified with a source, never invented.
+2. Judge whether the drop reads as an overreaction to a fixable, temporary problem, or a structural change to the business that justifies a lower price. Mark "unclear" honestly when the evidence is mixed.
+3. Note whether the market has kept selling since, or whether it has stabilized, since a falling knife is a different thing than a stock that already found a floor.
+4. State the single biggest risk if the read is wrong.
+
+This is not investment advice, never a buy or sell call, only a research read on why the price moved and whether the reaction fits the news.
+
+Respond with ONLY valid JSON, no markdown, no preamble. At most 4 candidates, every text field under 20 words.
+
+{"dips":[{"name":"Company","ticker":"TICK","price":"about $135","high":"down from about $160 in May 2026","dropPct":"about 16%","why":"the real, verified reason it fell","read":"overreaction|structural|unclear","stabilized":"yes|no|unclear","risk":"the single biggest risk if this read is wrong","source":"where verified"}],"note":"if nothing clean was found, say so plainly, else empty string"}`;
 }
 
 function focusPrompt(name, ticker, dateStr, moveContext) {
@@ -355,6 +396,8 @@ function extractJson(text) {
   if (supports) return { supports, weakens: salvageArray(clean, "weakens") || [], note: "" };
   const picks = salvageArray(clean, "picks");
   if (picks) return { picks, note: "" };
+  const dips = salvageArray(clean, "dips");
+  if (dips) return { dips, note: "" };
   throw new Error("unparseable json");
 }
 
@@ -534,6 +577,48 @@ function DiamondCard({ cand, watch, onToggle }) {
 
         <p className="mt-3 text-sm" style={{ color: C.red, opacity: 0.9 }}>
           <span style={{ color: C.dim }}>Biggest risk: </span>{cand.risk}
+        </p>
+        <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+          Verified via {cand.source}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function DipCard({ cand, watch, onToggle }) {
+  const read = READS[cand.read] || READS.unclear;
+  return (
+    <div className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${read.color}` }}>
+      <div style={{ width: 4, background: read.color, flexShrink: 0 }} />
+      <div className="flex-1 p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TickerChip company={cand} starred={watch.some((w) => w.ticker === cand.ticker)} onToggle={onToggle} />
+            <span className="text-sm" style={{ color: C.text, fontWeight: 600 }}>{cand.name}</span>
+            <span className="text-sm" style={{ color: C.urgent, fontFamily: "'IBM Plex Mono', monospace" }}>{cand.price}</span>
+          </div>
+          <span className="text-xs px-2 py-1 rounded" style={{ color: read.color, border: `1px solid ${read.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+            {read.label}
+          </span>
+        </div>
+
+        <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
+          <span style={{ color: C.dim }}>{cand.high} </span>
+          <span style={{ color: C.urgent, fontFamily: "'IBM Plex Mono', monospace" }}>({cand.dropPct})</span>
+        </p>
+        <p className="mt-1 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.85 }}>
+          <span style={{ color: C.dim }}>Why it fell: </span>{cand.why}
+        </p>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="text-xs px-2 py-1 rounded-md" style={{ border: `1px solid ${C.line}`, color: C.dim }}>
+            Since then: {cand.stabilized === "yes" ? "stabilized" : cand.stabilized === "no" ? "still falling" : "unclear"}
+          </span>
+        </div>
+
+        <p className="mt-3 text-sm" style={{ color: C.red, opacity: 0.9 }}>
+          <span style={{ color: C.dim }}>Biggest risk if this read is wrong: </span>{cand.risk}
         </p>
         <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
           Verified via {cand.source}
@@ -890,6 +975,10 @@ export default function MarketPulse() {
   const [diamondNote, setDiamondNote] = useState("");
   const [diamondRun, setDiamondRun] = useState(null);
   const [diamondLoading, setDiamondLoading] = useState(false);
+  const [dips, setDips] = useState([]);
+  const [dipsNote, setDipsNote] = useState("");
+  const [dipsRun, setDipsRun] = useState(null);
+  const [dipsLoading, setDipsLoading] = useState(false);
   const [deep, setDeep] = useState(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const [brief, setBrief] = useState(null);
@@ -942,6 +1031,15 @@ export default function MarketPulse() {
           setDiamonds(parsed.candidates || []);
           setDiamondNote(parsed.note || "");
           setDiamondRun(parsed.at || null);
+        }
+      } catch (e) {}
+      try {
+        const dp = await storage.get("pulse-dips");
+        if (dp) {
+          const parsed = JSON.parse(dp.value);
+          setDips(parsed.dips || []);
+          setDipsNote(parsed.note || "");
+          setDipsRun(parsed.at || null);
         }
       } catch (e) {}
       try {
@@ -1083,6 +1181,28 @@ export default function MarketPulse() {
       setError(e.fatal ? e.message : "The diamond hunt did not come back clean, even after a retry. Run it again.");
     }
     setDiamondLoading(false);
+  }
+
+  async function runDips() {
+    setDipsLoading(true);
+    setError("");
+    setLoadLine(0);
+    try {
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(dipPrompt(dateStr), 2, 1400);
+      const at = new Date().toLocaleString();
+      const found = result.dips || [];
+      setDips(found);
+      setDipsNote(result.note || "");
+      setDipsRun(at);
+      try {
+        await storage.set("pulse-dips", JSON.stringify({ dips: found, note: result.note || "", at }));
+      } catch (e) {}
+      addHistory("dips", found.map((d) => `${d.ticker} ${d.price}: ${d.high} (${d.dropPct}), ${d.why}`));
+    } catch (e) {
+      setError(e.fatal ? e.message : "The dip hunt did not come back clean, even after a retry. Run it again.");
+    }
+    setDipsLoading(false);
   }
 
   async function runFocus(item, moveContext) {
@@ -1281,8 +1401,8 @@ export default function MarketPulse() {
     .map((k) => ({ key: k, ...URGENCY[k], items: events.filter((e) => e.urgency === k) }))
     .filter((g) => g.items.length > 0);
 
-  const busy = loading || diamondLoading || briefLoading || picksLoading;
-  const busyLines = diamondLoading ? DIAMOND_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
+  const busy = loading || diamondLoading || dipsLoading || briefLoading || picksLoading;
+  const busyLines = diamondLoading ? DIAMOND_LINES : dipsLoading ? DIP_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
 
   return (
     <div
@@ -1371,6 +1491,15 @@ export default function MarketPulse() {
               >
                 {diamondLoading ? "Hunting..." : "Hunt for diamonds"}
               </button>
+            ) : tab === "dips" ? (
+              <button
+                onClick={runDips}
+                disabled={busy}
+                className="px-4 py-2.5 rounded-lg text-sm font-semibold"
+                style={{ background: busy ? C.panel : C.urgent, color: busy ? C.dim : "#2A1200", border: `1px solid ${busy ? C.line : C.urgent}`, cursor: busy ? "default" : "pointer" }}
+              >
+                {dipsLoading ? "Reading the drops..." : "Hunt for dips"}
+              </button>
             ) : tab === "brief" ? (
               <button
                 onClick={runBrief}
@@ -1430,6 +1559,13 @@ export default function MarketPulse() {
               Diamond scanner
             </button>
             <button
+              onClick={() => { setTab("dips"); setError(""); }}
+              className="px-3 py-1.5 rounded-full text-sm"
+              style={{ background: tab === "dips" ? "rgba(255,138,61,0.14)" : "transparent", border: `1px solid ${tab === "dips" ? C.urgent : C.line}`, color: tab === "dips" ? C.urgent : C.dim, cursor: "pointer" }}
+            >
+              Dip scanner
+            </button>
+            <button
               onClick={() => { setTab("brief"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "brief" ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${tab === "brief" ? C.soon : C.line}`, color: tab === "brief" ? C.soon : C.dim, cursor: "pointer" }}
@@ -1461,9 +1597,9 @@ export default function MarketPulse() {
                   {v.label}
                 </button>
               ))}
-            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : tab === "wire" ? picksRun : null) && (
+            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "brief" ? briefRun : tab === "wire" ? picksRun : null) && (
               <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "brief" ? briefRun : picksRun}
+                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "brief" ? briefRun : picksRun}
               </span>
             )}
           </div>
@@ -1764,6 +1900,33 @@ export default function MarketPulse() {
               <div className="space-y-3">
                 {diamonds.map((cand, i) => (
                   <DiamondCard key={i} cand={cand} watch={watch} onToggle={toggleWatch} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "dips" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(255,138,61,0.06)", border: `1px solid ${C.urgent}`, color: C.dim }}>
+              <span style={{ color: C.urgent }}>How this works: </span>
+              the ZTS pattern, broadened. Established, well known companies, any price, down 15 percent or more from a recent high. The whole question for each one is whether the drop reads as an overreaction to something fixable, or a structural change that actually justifies a lower price. A big name being cheap is not automatically an opportunity, sometimes the market is right.
+            </div>
+            {!dipsLoading && dips.length === 0 && !dipsNote && (
+              <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                <p className="text-base" style={{ color: C.text }}>No hunt yet.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for dips. It searches for established stocks down big from a recent high and reads whether the drop is overreaction or real.</p>
+              </div>
+            )}
+            {!dipsLoading && dipsNote && dips.length === 0 && (
+              <div className="rounded-lg p-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+                <p className="text-sm" style={{ color: C.text }}>{dipsNote}</p>
+              </div>
+            )}
+            {!dipsLoading && dips.length > 0 && (
+              <div className="space-y-3">
+                {dips.map((cand, i) => (
+                  <DipCard key={i} cand={cand} watch={watch} onToggle={toggleWatch} />
                 ))}
               </div>
             )}
