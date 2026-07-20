@@ -23,7 +23,7 @@ function daysAgoISO(days) {
 
 async function forTicker(ticker, key) {
   const hit = cache[ticker];
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
+  if (hit && Date.now() - hit.at < TTL_MS) return { ok: true, data: hit.data };
 
   const from = daysAgoISO(WINDOW_DAYS);
   const to = daysAgoISO(0);
@@ -32,8 +32,13 @@ async function forTicker(ticker, key) {
   try {
     const url = `${FINNHUB_URL}?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${key}`;
     const r = await fetch(url, { signal: controller.signal });
-    if (!r.ok) throw new Error(`status ${r.status}`);
+    if (!r.ok) {
+      let body = "";
+      try { body = (await r.text()).slice(0, 80); } catch (e) {}
+      return { ok: false, reason: `status ${r.status}${body ? ` ${body}` : ""}` };
+    }
     const j = await r.json();
+    if (j && j.error) return { ok: false, reason: String(j.error).slice(0, 80) };
     const rows = Array.isArray(j.data) ? j.data : [];
 
     const buyers = new Map(); // name -> usd bought
@@ -71,7 +76,9 @@ async function forTicker(ticker, key) {
       windowDays: WINDOW_DAYS,
     };
     cache[ticker] = { at: Date.now(), data };
-    return data;
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, reason: (e && e.message) || "no answer" };
   } finally {
     clearTimeout(timer);
   }
@@ -118,7 +125,10 @@ export default async function handler(req, res) {
   const settled = await pool(symbols, 6, (s) => forTicker(s, key));
   const results = [];
   const failed = [];
-  settled.forEach((r, i) => { if (r) results.push(r); else failed.push(symbols[i]); });
+  settled.forEach((r, i) => {
+    if (r && r.ok) results.push(r.data);
+    else failed.push(`${symbols[i]}${r && r.reason ? ` (${r.reason})` : ""}`);
+  });
 
   res.status(200).json({ results, failed });
 }

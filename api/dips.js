@@ -149,7 +149,7 @@ export default async function handler(req, res) {
   const survivors = charts
     .filter((c) => c.drawdownPct >= minDrawdown)
     .sort((a, b) => b.drawdownPct - a.drawdownPct)
-    .slice(0, 12);
+    .slice(0, 8);
 
   // Wave 2: fundamentals only for survivors (best effort, may all be n/a).
   const funds = await pool(survivors, 8, (c) => fetchFundamentals(c.ticker));
