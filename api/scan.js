@@ -1,23 +1,26 @@
-// Serverless function that answers scan prompts with whichever AI brain
-// is configured. Two are supported. Gemini (GEMINI_API_KEY, free tier at
-// aistudio.google.com) is tried first when present, so daily use costs
-// nothing. The Anthropic API (ANTHROPIC_API_KEY, paid) is the fallback,
-// so paid credit is only spent when the free brain is unavailable. Keys
-// live only in server environment variables and never reach the browser.
+// Serverless function that answers scan prompts with whichever free AI
+// brain is reachable, falling through a chain so a single exhausted free
+// tier never leaves the app dead. Order:
+//   1. Gemini, three models in turn (GEMINI_API_KEY, free, web search).
+//      Falling to the lighter models stretches the free daily quota far,
+//      since gemini-2.5-flash-lite has a much larger free allowance.
+//   2. Groq (GROQ_API_KEY, free, no card at console.groq.com). Fast and
+//      generous, but no live web search, so reads lean on model knowledge.
+//   3. Anthropic (ANTHROPIC_API_KEY, paid, web search) as the last resort.
+// Keys live only in server environment variables, never in the browser.
 
-async function callGemini(apiKey, prompt, tokens) {
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+
+async function callGeminiModel(apiKey, model, prompt, tokens) {
   const r = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        // Grounding with Google Search, the Gemini version of web search.
         tools: [{ google_search: {} }],
         generationConfig: {
-          // Headroom on top of the requested budget because Gemini can
-          // spend part of the output allowance before the JSON finishes.
           maxOutputTokens: tokens + 512,
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -26,15 +29,53 @@ async function callGemini(apiKey, prompt, tokens) {
   );
   const data = await r.json();
   if (!r.ok) {
-    throw new Error((data.error && data.error.message) || `Gemini error ${r.status}`);
+    const msg = (data.error && data.error.message) || `Gemini ${model} error ${r.status}`;
+    const err = new Error(msg);
+    err.status = r.status;
+    throw err;
   }
   const candidate = (data.candidates || [])[0];
   const text = (((candidate || {}).content || {}).parts || [])
     .map((p) => p.text || "")
     .join("\n");
-  if (!text) throw new Error("Gemini returned no text");
-  // Normalized to the same shape the frontend already parses.
-  return { content: [{ type: "text", text }], provider: "gemini" };
+  if (!text) throw new Error(`Gemini ${model} returned no text`);
+  return { content: [{ type: "text", text }], provider: `gemini:${model}` };
+}
+
+// Try each Gemini model until one answers. A 429 (quota) on one model
+// still lets a lighter model with its own allowance succeed.
+async function callGemini(apiKey, prompt, tokens) {
+  let last;
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await callGeminiModel(apiKey, model, prompt, tokens);
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last || new Error("all Gemini models failed");
+}
+
+// Groq is OpenAI-compatible. No web search, so the prompt's own context
+// carries the weight; fine for reading well-known names, weaker on fresh
+// breaking specifics.
+async function callGroq(apiKey, prompt, tokens) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      max_tokens: tokens,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error((data.error && data.error.message) || `Groq error ${r.status}`);
+  }
+  const text = (((data.choices || [])[0] || {}).message || {}).content || "";
+  if (!text) throw new Error("Groq returned no text");
+  return { content: [{ type: "text", text }], provider: "groq" };
 }
 
 async function callAnthropic(apiKey, prompt, tokens) {
@@ -63,11 +104,12 @@ export default async function handler(req, res) {
   }
 
   const gemKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
   const antKey = process.env.ANTHROPIC_API_KEY;
-  if (!gemKey && !antKey) {
+  if (!gemKey && !groqKey && !antKey) {
     res.status(500).json({
       error:
-        "AI scans need an API key on the server. Add GEMINI_API_KEY, free from aistudio.google.com, or ANTHROPIC_API_KEY, paid. The Live wire, watchlist, and live watcher all work without one.",
+        "AI scans need an API key on the server. Add GEMINI_API_KEY or GROQ_API_KEY (both free) or ANTHROPIC_API_KEY (paid). The Live wire, dip screen, watchlist, and live watcher all work without one.",
     });
     return;
   }
@@ -78,28 +120,40 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Quick scans stay at 1000 tokens. The deep dive and daily brief ask
-  // for more room, clamped here so the browser can never request an
-  // unbounded amount.
   const tokens = Math.min(Math.max(parseInt(maxTokens, 10) || 1000, 256), 2000);
+  const errors = [];
 
-  // Free brain first. Paid brain only as backup.
+  // Free brains first, in order.
   if (gemKey) {
     try {
       res.status(200).json(await callGemini(gemKey, prompt, tokens));
       return;
     } catch (e) {
-      if (!antKey) {
-        res.status(502).json({ error: `The free Google brain failed: ${e.message}` });
-        return;
-      }
+      errors.push(`Gemini: ${e.message}`);
+    }
+  }
+  if (groqKey) {
+    try {
+      res.status(200).json(await callGroq(groqKey, prompt, tokens));
+      return;
+    } catch (e) {
+      errors.push(`Groq: ${e.message}`);
+    }
+  }
+  if (antKey) {
+    try {
+      const { status, data } = await callAnthropic(antKey, prompt, tokens);
+      res.status(status).json(data);
+      return;
+    } catch (e) {
+      errors.push(`Anthropic: ${e.message}`);
     }
   }
 
-  try {
-    const { status, data } = await callAnthropic(antKey, prompt, tokens);
-    res.status(status).json(data);
-  } catch (e) {
-    res.status(502).json({ error: "Could not reach the Anthropic API" });
-  }
+  // Everything configured was tried and failed.
+  res.status(502).json({
+    error:
+      `Every AI brain was exhausted or errored (${errors.join(" | ")}). ` +
+      "Free daily limits reset overnight. To add more free headroom now, set GROQ_API_KEY, free with no card at console.groq.com.",
+  });
 }

@@ -103,15 +103,22 @@ export default async function handler(req, res) {
     return;
   }
 
-  const rawKey = (process.env.VITE_FINNHUB_KEY || process.env.FINNHUB_KEY || "").replace(/\s+/g, "");
-  const key = rawKey.slice(0, 20);
+  const qs = (req.url || "").split("?")[1] || "";
+  const params = new URLSearchParams(qs);
+
+  // Prefer the key the browser passes (the one that already works in the
+  // live watcher) over the server env var, which may be stale. This ends
+  // the Vercel-env-key mismatch: whatever key connects the watcher also
+  // powers the insider layer, no settings edit needed.
+  const passed = (params.get("key") || "").replace(/\s+/g, "").slice(0, 20);
+  const envKey = (process.env.VITE_FINNHUB_KEY || process.env.FINNHUB_KEY || "").replace(/\s+/g, "").slice(0, 20);
+  const key = passed || envKey;
   if (!key) {
-    res.status(200).json({ results: [], failed: ["no Finnhub key on the server"] });
+    res.status(200).json({ results: [], failed: ["no Finnhub key available"] });
     return;
   }
 
-  const qs = (req.url || "").split("?")[1] || "";
-  const symbols = (new URLSearchParams(qs).get("symbols") || "")
+  const symbols = (params.get("symbols") || "")
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z.\-]{1,6}$/.test(s))
