@@ -1043,6 +1043,7 @@ export default function MarketPulse() {
   const [dips, setDips] = useState([]);
   const [dipsNote, setDipsNote] = useState("");
   const [dipsInsiderNote, setDipsInsiderNote] = useState("");
+  const [dipsReadNote, setDipsReadNote] = useState("");
   const [dipsRun, setDipsRun] = useState(null);
   const [dipsLoading, setDipsLoading] = useState(false);
   const [deep, setDeep] = useState(null);
@@ -1303,6 +1304,16 @@ export default function MarketPulse() {
         setDipsInsiderNote(`Insider layer unavailable: ${insiderData.failed.slice(0, 2).join("; ")}`);
       } else {
         setDipsInsiderNote("");
+      }
+
+      // Surface why the AI read failed, so it can be diagnosed from the
+      // page instead of vanishing silently.
+      if (reads.__error) {
+        setDipsReadNote(`AI read unavailable: ${reads.__error.message}`);
+      } else if (Object.keys(reads).length === 0) {
+        setDipsReadNote("AI read returned no entries. Run the hunt again to retry.");
+      } else {
+        setDipsReadNote("");
       }
 
       const merged = fallen.map((c) => {
@@ -2044,6 +2055,9 @@ export default function MarketPulse() {
               <div className="rounded-lg p-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
                 <p className="text-sm" style={{ color: C.text }}>{dipsNote}</p>
               </div>
+            )}
+            {!dipsLoading && dipsReadNote && dips.length > 0 && (
+              <p className="text-xs mb-2" style={{ color: C.red, opacity: 0.85 }}>{dipsReadNote}</p>
             )}
             {!dipsLoading && dipsInsiderNote && dips.length > 0 && (
               <p className="text-xs mb-3" style={{ color: C.dim }}>{dipsInsiderNote}</p>

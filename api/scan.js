@@ -9,6 +9,11 @@
 //   3. Anthropic (ANTHROPIC_API_KEY, paid, web search) as the last resort.
 // Keys live only in server environment variables, never in the browser.
 
+// Let this function run up to 60s. Gemini with web-search grounding on a
+// multi-ticker prompt routinely takes 15-40s; the default 10s serverless
+// limit was cutting it off, which looked like "no AI read returned".
+export const config = { maxDuration: 60 };
+
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
 
 async function callGeminiModel(apiKey, model, prompt, tokens) {
