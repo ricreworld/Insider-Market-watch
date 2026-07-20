@@ -1276,14 +1276,11 @@ export default function MarketPulse() {
         return;
       }
 
-      // Step 2: two real enrichments in parallel. The insider layer is
-      // free SEC data and never needs the AI brain; the read layer does.
-      // Pass the browser's working Finnhub key so the insider route uses
-      // the same key the watcher does, not a possibly-stale Vercel one.
+      // Step 2: two real enrichments in parallel. The insider layer pulls
+      // Form 4 filings straight from SEC EDGAR, free and keyless; the read
+      // layer is the only part that uses the AI brain.
       const syms = fallen.map((c) => c.ticker).join(",");
-      let fhKey = "";
-      try { const k = await storage.get("pulse-finnhub-key"); fhKey = (k && k.value) ? k.value.trim() : ""; } catch (e) {}
-      const insiderP = fetch(`/api/insider?symbols=${encodeURIComponent(syms)}${fhKey ? `&key=${encodeURIComponent(fhKey)}` : ""}`)
+      const insiderP = fetch(`/api/insider?symbols=${encodeURIComponent(syms)}`)
         .then((rr) => rr.json())
         .catch((e) => ({ results: [], failed: [`request failed: ${(e && e.message) || "unknown"}`] }));
 
