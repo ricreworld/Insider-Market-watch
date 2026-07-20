@@ -19,7 +19,7 @@ export const config = { maxDuration: 60 };
 // and confirmed working with current auth keys. Falls through fuller ->
 // lighter (bigger quota) -> 2.0 so a busy or quota-capped model still
 // lands on a working one.
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.0-flash"];
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 
 async function callGeminiModel(apiKey, model, prompt, tokens) {
   const r = await fetch(
