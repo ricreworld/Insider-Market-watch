@@ -14,7 +14,12 @@
 // limit was cutting it off, which looked like "no AI read returned".
 export const config = { maxDuration: 60 };
 
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+// The dated models (gemini-2.5-flash etc.) are retired for new Google
+// accounts. The "-latest" aliases stay valid as Google rotates versions,
+// and confirmed working with current auth keys. Falls through fuller ->
+// lighter (bigger quota) -> 2.0 so a busy or quota-capped model still
+// lands on a working one.
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.0-flash"];
 
 async function callGeminiModel(apiKey, model, prompt, tokens) {
   const r = await fetch(
