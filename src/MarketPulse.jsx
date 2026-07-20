@@ -74,6 +74,13 @@ const HIST = {
   brief: { label: "Daily brief", color: "#5FB2E8" },
   movers: { label: "Wire movers", color: "#7BC98F" },
   puts: { label: "Put pressure", color: "#E06C5F" },
+  tip: { label: "Grapevine tip", color: "#F5C664" },
+};
+
+const SENTIMENT = {
+  bullish: { label: "Bullish", color: "#7BC98F", mark: "↑" },
+  bearish: { label: "Bearish", color: "#E06C5F", mark: "↓" },
+  mixed: { label: "Mixed", color: "#8B93A7", mark: "→" },
 };
 
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
@@ -263,6 +270,33 @@ RULES:
 Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 18 words.
 
 {"picks":[{"n":1,"headline":"short restatement","tickers":["TICK"],"mechanism":"why this moves the stock","pressure":"up|down|unclear","reacted":"no|partial|yes","confidence":"low|medium|high"}],"note":"only if nothing on the wire is actionable, else empty string"}`;
+}
+
+// Mode eight, the grapevine. Ricardo pastes raw chat text from a group
+// chat, Discord, or a friend's text, the kind of casual tip that never
+// shows up on any public wire. This mode structures it into the same
+// shape as everything else so it can be starred, logged, and reviewed,
+// but it stays clearly labeled as unverified opinion, never fact.
+function tipPrompt(dateStr, rawText) {
+  return `${BRIEF}
+
+Mode eight, the grapevine. Today is ${dateStr}. Ricardo pasted raw chat text from a group chat or a friend, not a public source. Structure it, do not endorse it.
+
+Chat text:
+"""
+${rawText}
+"""
+
+RULES:
+1. Pull out every ticker actually named or clearly implied. If none is named, use web search only to check whether an unusual company name maps to a real ticker, otherwise "?".
+2. gist is a one line plain restatement of what the chat is saying, in neutral language, no hype.
+3. If a specific options play is mentioned (calls, puts, strike, expiry), extract it exactly as stated. If none, playType is "none".
+4. sentiment is bullish, bearish, or mixed, based only on the tone of the chat text, never your own opinion.
+5. Never verify or endorse the tip. Do not search for whether it will work. This is a log of what was said, not a forecast.
+
+Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 20 words.
+
+{"tickers":["TICK"],"gist":"plain one line restatement","sentiment":"bullish|bearish|mixed","playType":"calls|puts|shares|none","strike":"like $90, or empty string","expiry":"like 1/27, or empty string","note":"only if nothing usable was in the text, else empty string"}`;
 }
 
 function fmtAge(iso) {
@@ -878,6 +912,9 @@ export default function MarketPulse() {
   const [autoBrief, setAutoBrief] = useState("off");
   const [autoBriefPending, setAutoBriefPending] = useState(false);
   const [showPlaybook, setShowPlaybook] = useState(false);
+  const [tips, setTips] = useState([]);
+  const [tipText, setTipText] = useState("");
+  const [tipLoading, setTipLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -935,6 +972,10 @@ export default function MarketPulse() {
       try {
         const h = await storage.get("pulse-history");
         if (h) setHistory(JSON.parse(h.value));
+      } catch (e) {}
+      try {
+        const t = await storage.get("pulse-tips");
+        if (t) setTips(JSON.parse(t.value));
       } catch (e) {}
       try {
         const a = await storage.get("pulse-auto-brief");
@@ -1210,6 +1251,30 @@ export default function MarketPulse() {
       setError(e.fatal ? e.message : "The wire triage did not come back clean, even after a retry. Run it again.");
     }
     setPicksLoading(false);
+  }
+
+  async function captureTip() {
+    const raw = tipText.trim();
+    if (!raw) return;
+    setTipLoading(true);
+    setError("");
+    try {
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(tipPrompt(dateStr, raw), 2, 500);
+      const at = new Date().toLocaleString();
+      const tickers = (result.tickers || []).filter((t) => t && t !== "?");
+      const entry = { ...result, tickers, raw, at };
+      setTips((prev) => {
+        const next = [entry, ...prev].slice(0, 40);
+        try { storage.set("pulse-tips", JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setTipText("");
+      addHistory("tip", [`${tickers.join(" ") || "no ticker"}: ${result.gist || raw.slice(0, 60)}`]);
+    } catch (e) {
+      setError(e.fatal ? e.message : "Could not read that tip. Try pasting it again.");
+    }
+    setTipLoading(false);
   }
 
   const groups = ["now", "soon", "context"]
@@ -1880,6 +1945,58 @@ export default function MarketPulse() {
                 <p className="text-sm" style={{ color: C.text }}>{picksNote}</p>
               </div>
             )}
+
+            <section className="mb-5">
+              <p className="text-xs mb-2" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace" }}>THE GRAPEVINE, PASTE A TIP FROM A CHAT</p>
+              <p className="text-xs mb-2 leading-relaxed" style={{ color: C.dim }}>
+                A friend's text, a group chat, a Discord call. This never comes from a public wire, no scanner can find it for you. Paste it here and it gets logged the same way as everything else, clearly marked as someone's opinion, never fact.
+              </p>
+              <textarea
+                value={tipText}
+                onChange={(e) => setTipText(e.target.value)}
+                placeholder="Paste the raw chat text here, like: ZTS down from 160? throw 5k at it, do $90 calls for 1/27"
+                className="w-full px-3 py-2 rounded-md text-sm"
+                rows={3}
+                style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace", resize: "vertical" }}
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  onClick={captureTip}
+                  disabled={tipLoading || !tipText.trim()}
+                  className="text-xs px-2.5 py-1.5 rounded"
+                  style={{ border: `1px solid ${tipText.trim() ? C.gold : C.line}`, color: tipText.trim() ? C.gold : C.dim, background: "transparent", cursor: tipText.trim() ? "pointer" : "default" }}
+                >
+                  {tipLoading ? "Reading it..." : "Capture this tip"}
+                </button>
+              </div>
+              {tips.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {tips.map((t, i) => {
+                    const s = SENTIMENT[t.sentiment] || SENTIMENT.mixed;
+                    return (
+                      <div key={i} className="rounded-lg px-3 py-2" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          {(t.tickers || []).map((tk, j) => (
+                            <TickerChip key={j} company={{ ticker: tk, name: tk }} starred={watch.some((w) => w.ticker === tk)} onToggle={toggleWatch} />
+                          ))}
+                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ border: `1px solid ${s.color}`, color: s.color, fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {s.mark} {s.label}
+                          </span>
+                          {t.playType && t.playType !== "none" && (
+                            <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: C.dim, border: `1px solid ${C.line}` }}>
+                              {t.playType} {t.strike} {t.expiry}
+                            </span>
+                          )}
+                          <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>{t.at}</span>
+                        </div>
+                        <p className="text-sm leading-relaxed" style={{ color: C.text }}>{t.gist || t.note}</p>
+                        <p className="text-xs mt-1" style={{ color: C.dim, fontStyle: "italic" }}>"{t.raw}"</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
 
             {buzz && (buzz.trending || []).length > 0 && (
               <section className="mb-5">
