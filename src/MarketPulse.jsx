@@ -686,7 +686,7 @@ function DipCard({ cand, watch, onToggle }) {
             )}
           </>
         ) : (
-          <p className="mt-3 text-xs" style={{ color: C.dim }}>Real drawdown measured from live prices. The read on why it fell is loading...</p>
+          <p className="mt-3 text-xs" style={{ color: C.dim }}>Real drawdown measured from live prices. No AI read returned for this one, run the hunt again to retry.</p>
         )}
       </div>
     </div>
@@ -1042,6 +1042,7 @@ export default function MarketPulse() {
   const [diamondLoading, setDiamondLoading] = useState(false);
   const [dips, setDips] = useState([]);
   const [dipsNote, setDipsNote] = useState("");
+  const [dipsInsiderNote, setDipsInsiderNote] = useState("");
   const [dipsRun, setDipsRun] = useState(null);
   const [dipsLoading, setDipsLoading] = useState(false);
   const [deep, setDeep] = useState(null);
@@ -1280,10 +1281,10 @@ export default function MarketPulse() {
       const syms = fallen.map((c) => c.ticker).join(",");
       const insiderP = fetch(`/api/insider?symbols=${encodeURIComponent(syms)}`)
         .then((rr) => rr.json())
-        .catch(() => ({ results: [] }));
+        .catch((e) => ({ results: [], failed: [`request failed: ${(e && e.message) || "unknown"}`] }));
 
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const readP = callClaude(dipPrompt(dateStr, fallen), 2, 1600)
+      const readP = callClaude(dipPrompt(dateStr, fallen), 2, 2000)
         .then((result) => {
           const byTicker = {};
           (result.reads || []).forEach((rd) => { if (rd.ticker) byTicker[rd.ticker.toUpperCase()] = rd; });
@@ -1295,6 +1296,13 @@ export default function MarketPulse() {
 
       const insiderByTicker = {};
       (insiderData.results || []).forEach((r) => { insiderByTicker[r.ticker.toUpperCase()] = r; });
+      // If the insider layer returned nothing usable, surface why so it
+      // can be diagnosed from the page instead of failing silently.
+      if ((insiderData.results || []).length === 0 && (insiderData.failed || []).length > 0) {
+        setDipsInsiderNote(`Insider layer unavailable: ${insiderData.failed.slice(0, 2).join("; ")}`);
+      } else {
+        setDipsInsiderNote("");
+      }
 
       const merged = fallen.map((c) => {
         const out = { ...c, insider: insiderByTicker[c.ticker.toUpperCase()] || null };
@@ -2035,6 +2043,9 @@ export default function MarketPulse() {
               <div className="rounded-lg p-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
                 <p className="text-sm" style={{ color: C.text }}>{dipsNote}</p>
               </div>
+            )}
+            {!dipsLoading && dipsInsiderNote && dips.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: C.dim }}>{dipsInsiderNote}</p>
             )}
             {!dipsLoading && dips.length > 0 && (
               <div className="space-y-3">
