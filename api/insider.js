@@ -11,8 +11,9 @@
 // figures come only from the filings themselves.
 
 const WINDOW_DAYS = 150;
-const MAX_FILINGS_PER_TICKER = 6; // cap fetches per ticker
-const MAX_TICKERS = 6; // and only the deepest few survivors per run
+const MAX_FILINGS_PER_TICKER = 5; // cap fetches per ticker
+const MAX_TICKERS = 8; // cover all dip survivors; SEC load stays bounded
+                       // by the rate gate (~8x5 + submissions ~= 6-7s)
 const UA_BASE = "MarketPulse personal research dashboard";
 
 // SEC enforces a hard ~10 requests/second fair-access limit; exceed it

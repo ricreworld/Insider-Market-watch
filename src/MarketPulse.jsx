@@ -658,7 +658,7 @@ function DipCard({ cand, watch, onToggle }) {
                 <span className="text-xs" style={{ color: C.dim }}>
                   {cand.insider.buyers} bought {fmtUsd(cand.insider.boughtUsd)}
                   {cand.insider.sellers > 0 ? ` · ${cand.insider.sellers} sold ${fmtUsd(cand.insider.soldUsd)}` : ""}
-                  {cand.insider.topBuyer ? ` · top buy ${cand.insider.topBuyer.name.split(" ").slice(-1)[0]} ${fmtUsd(cand.insider.topBuyer.usd)}` : ""}
+                  {cand.insider.topBuyer ? ` · top buy ${cand.insider.topBuyer.name.split(/\s+/)[0]} ${fmtUsd(cand.insider.topBuyer.usd)}` : ""}
                 </span>
               )}
             </div>
