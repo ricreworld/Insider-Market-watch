@@ -91,6 +91,14 @@ const READS = {
   unclear: { label: "Genuinely unclear", color: "#8B93A7" },
 };
 
+// Smart-money read from recent open-market Form 4 activity.
+const INSIDER = {
+  buying: { label: "Insiders buying", color: "#7BC98F" },
+  selling: { label: "Insiders selling", color: "#E06C5F" },
+  mixed: { label: "Insiders mixed", color: "#F5C664" },
+  quiet: { label: "No insider trades", color: "#8B93A7" },
+};
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -343,6 +351,15 @@ RULES:
 Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 20 words.
 
 {"tickers":["TICK"],"gist":"plain one line restatement","sentiment":"bullish|bearish|mixed","playType":"calls|puts|shares|none","strike":"like $90, or empty string","expiry":"like 1/27, or empty string","note":"only if nothing usable was in the text, else empty string"}`;
+}
+
+function fmtUsd(v) {
+  if (!v || typeof v !== "number") return "$0";
+  const a = Math.abs(v);
+  if (a >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
+  return `$${v.toFixed(0)}`;
 }
 
 function fmtMarketCap(v) {
@@ -628,6 +645,25 @@ function DipCard({ cand, watch, onToggle }) {
           {cand.marketCap ? ` · ${cand.marketCap}` : ""}
           {bounced ? ` · already +${cand.offLowPct.toFixed(0)}% off its low` : ""}
         </p>
+
+        {cand.insider && (() => {
+          const ins = INSIDER[cand.insider.verdict] || INSIDER.quiet;
+          const has = cand.insider.buyers > 0 || cand.insider.sellers > 0;
+          return (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: ins.color, border: `1px solid ${ins.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                {ins.label}
+              </span>
+              {has && (
+                <span className="text-xs" style={{ color: C.dim }}>
+                  {cand.insider.buyers} bought {fmtUsd(cand.insider.boughtUsd)}
+                  {cand.insider.sellers > 0 ? ` · ${cand.insider.sellers} sold ${fmtUsd(cand.insider.soldUsd)}` : ""}
+                  {cand.insider.topBuyer ? ` · top buy ${cand.insider.topBuyer.name.split(" ").slice(-1)[0]} ${fmtUsd(cand.insider.topBuyer.usd)}` : ""}
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
         {read ? (
           <>
@@ -1239,27 +1275,42 @@ export default function MarketPulse() {
         return;
       }
 
-      // Step 2: enrich with the AI read on why each one fell. If this
-      // fails or no brain is configured, the real screen still stands.
+      // Step 2: two real enrichments in parallel. The insider layer is
+      // free SEC data and never needs the AI brain; the read layer does.
+      const syms = fallen.map((c) => c.ticker).join(",");
+      const insiderP = fetch(`/api/insider?symbols=${encodeURIComponent(syms)}`)
+        .then((rr) => rr.json())
+        .catch(() => ({ results: [] }));
+
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const readP = callClaude(dipPrompt(dateStr, fallen), 2, 1600)
+        .then((result) => {
+          const byTicker = {};
+          (result.reads || []).forEach((rd) => { if (rd.ticker) byTicker[rd.ticker.toUpperCase()] = rd; });
+          return byTicker;
+        })
+        .catch((e) => ({ __error: e }));
+
+      const [insiderData, reads] = await Promise.all([insiderP, readP]);
+
+      const insiderByTicker = {};
+      (insiderData.results || []).forEach((r) => { insiderByTicker[r.ticker.toUpperCase()] = r; });
+
+      const merged = fallen.map((c) => {
+        const out = { ...c, insider: insiderByTicker[c.ticker.toUpperCase()] || null };
+        const rd = !reads.__error ? reads[c.ticker.toUpperCase()] : null;
+        return rd ? { ...out, why: rd.why, read: rd.read, stabilized: rd.stabilized, risk: rd.risk, source: rd.source } : out;
+      });
+      setDips(merged);
       try {
-        const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-        const result = await callClaude(dipPrompt(dateStr, fallen), 2, 1600);
-        const byTicker = {};
-        (result.reads || []).forEach((rd) => { if (rd.ticker) byTicker[rd.ticker.toUpperCase()] = rd; });
-        const merged = fallen.map((c) => {
-          const rd = byTicker[c.ticker.toUpperCase()];
-          return rd ? { ...c, why: rd.why, read: rd.read, stabilized: rd.stabilized, risk: rd.risk, source: rd.source } : c;
-        });
-        setDips(merged);
-        try {
-          await storage.set("pulse-dips", JSON.stringify({ dips: merged, note: "", at }));
-        } catch (e) {}
-        addHistory("dips", merged.map((d) => `${d.ticker} $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off high${d.why ? `: ${d.why}` : ""}`));
-      } catch (e) {
-        // Keep the real screen; just note the read layer was skipped.
-        try { await storage.set("pulse-dips", JSON.stringify({ dips: fallen, note: "", at })); } catch (er) {}
-        addHistory("dips", fallen.map((d) => `${d.ticker} $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off 52wk high`));
-        if (e.fatal) setError(`${e.message} The real drawdown screen below still works with no key.`);
+        await storage.set("pulse-dips", JSON.stringify({ dips: merged, note: "", at }));
+      } catch (e) {}
+      addHistory("dips", merged.map((d) => {
+        const ins = d.insider ? `, insiders ${d.insider.verdict}` : "";
+        return `${d.ticker} $${d.price.toFixed(2)}, down ${d.drawdownPct.toFixed(0)}% off high${ins}${d.why ? `: ${d.why}` : ""}`;
+      }));
+      if (reads.__error && reads.__error.fatal) {
+        setError(`${reads.__error.message} The real drawdown and insider data below still work with no AI key.`);
       }
     } catch (e) {
       setError("Could not reach the price data source for the dip screen. Try again in a moment.");
@@ -1972,7 +2023,7 @@ export default function MarketPulse() {
           <>
             <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(255,138,61,0.06)", border: `1px solid ${C.urgent}`, color: C.dim }}>
               <span style={{ color: C.urgent }}>How this works: </span>
-              the ZTS pattern, with real numbers. It measures the actual drawdown off the 52-week high for a universe of established names from live price data, then keeps the ones down 20 percent or more. Your starred tickers are checked too. For each survivor, the read on why it fell, and whether that drop looks like an overreaction to something fixable or a structural change that justifies the lower price. A big name being cheap is not automatically an opportunity, sometimes the market is right.
+              the ZTS pattern, with real numbers. It measures the actual drawdown off the 52-week high for a universe of established names from live price data, then keeps the ones down 20 percent or more, your starred tickers included. For each survivor it adds two layers: the AI read on why it fell (overreaction versus structural), and the smart-money check, whether company insiders have been buying the dip with their own money or selling into it, straight from SEC Form 4 filings. Fallen plus insiders buying is the strong setup; fallen plus insiders selling confirms the trap. A big name being cheap is not automatically an opportunity, sometimes the market is right.
             </div>
             {!dipsLoading && dips.length === 0 && !dipsNote && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
