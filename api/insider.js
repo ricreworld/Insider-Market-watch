@@ -11,33 +11,70 @@
 // figures come only from the filings themselves.
 
 const WINDOW_DAYS = 150;
-const MAX_FILINGS_PER_TICKER = 8; // cap fetches to stay within time limits
+const MAX_FILINGS_PER_TICKER = 6; // cap fetches per ticker
+const MAX_TICKERS = 6; // and only the deepest few survivors per run
 const UA_BASE = "MarketPulse personal research dashboard";
+
+// SEC enforces a hard ~10 requests/second fair-access limit; exceed it
+// and the IP gets a 10-minute 403 timeout. Every SEC call goes through
+// this gate, which spaces request starts ~140ms apart (~7/s, safely
+// under the ceiling) so a burst of Form 4 fetches never trips it.
+const SEC_GAP_MS = 140;
+let secGate = Promise.resolve();
+function secTurn() {
+  const p = secGate.then(() => new Promise((r) => setTimeout(r, SEC_GAP_MS)));
+  secGate = p.catch(() => {});
+  return p;
+}
+
+async function secFetch(url, ua, timeoutMs = 7000) {
+  await secTurn();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal, headers: { "User-Agent": ua, Accept: "application/json, text/xml, */*" } });
+    if (!r.ok) return { ok: false, status: r.status };
+    return { ok: true, text: await r.text() };
+  } catch (e) {
+    return { ok: false, status: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // CIK lookup, cached a day. Same free SEC file the wire route uses.
 let cikMapPromise = null;
 let cikMapAt = 0;
-async function getCikMap(ua) {
-  const now = Date.now();
-  if (!cikMapPromise || now - cikMapAt > 24 * 60 * 60 * 1000) {
-    cikMapAt = now;
-    cikMapPromise = fetch("https://www.sec.gov/files/company_tickers.json", {
-      headers: { "User-Agent": ua, Accept: "application/json" },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data) return null;
+async function loadCikMap(ua) {
+  // Two tries: if the IP is briefly throttled, a short wait may clear it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await secFetch("https://www.sec.gov/files/company_tickers.json", ua, 9000);
+    if (r.ok) {
+      try {
+        const data = JSON.parse(r.text);
         const byTicker = {};
         for (const k of Object.keys(data)) {
           const row = data[k];
           if (row && row.ticker) byTicker[String(row.ticker).toUpperCase()] = String(row.cik_str).padStart(10, "0");
         }
         return byTicker;
-      })
-      .catch(() => null);
+      } catch (e) {
+        return null;
+      }
+    }
+    await new Promise((res) => setTimeout(res, 600));
+  }
+  return null;
+}
+
+async function getCikMap(ua) {
+  const now = Date.now();
+  if (!cikMapPromise || now - cikMapAt > 24 * 60 * 60 * 1000) {
+    cikMapAt = now;
+    cikMapPromise = loadCikMap(ua);
   }
   const map = await cikMapPromise;
-  if (!map) cikMapPromise = null; // failed, retry next time
+  if (!map) cikMapPromise = null; // failed, retry on the next request
   return map;
 }
 
@@ -92,30 +129,16 @@ async function pool(items, limit, worker) {
   return out;
 }
 
-async function fetchXml(url, ua) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 7000);
-  try {
-    const r = await fetch(url, { signal: controller.signal, headers: { "User-Agent": ua } });
-    if (!r.ok) return null;
-    return await r.text();
-  } catch (e) {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function forTicker(ticker, cik, ua) {
   const hit = cache[ticker];
   if (hit && Date.now() - hit.at < TTL_MS) return { ok: true, data: hit.data };
 
   // Recent filings list for this company.
   const subUrl = `https://data.sec.gov/submissions/CIK${cik}.json`;
-  const subRaw = await fetchXml(subUrl, ua);
-  if (!subRaw) return { ok: false, reason: "submissions unavailable" };
+  const subRes = await secFetch(subUrl, ua);
+  if (!subRes.ok) return { ok: false, reason: `submissions ${subRes.status || "unavailable"}` };
   let sub;
-  try { sub = JSON.parse(subRaw); } catch (e) { return { ok: false, reason: "submissions parse failed" }; }
+  try { sub = JSON.parse(subRes.text); } catch (e) { return { ok: false, reason: "submissions parse failed" }; }
   const recent = (sub.filings && sub.filings.recent) || {};
   const forms = recent.form || [];
   const accns = recent.accessionNumber || [];
@@ -135,12 +158,14 @@ async function forTicker(ticker, cik, ua) {
     targets.push(`https://www.sec.gov/Archives/edgar/data/${cikInt}/${accn}/${doc}`);
   }
 
-  const xmls = (await pool(targets, 4, (u) => fetchXml(u, ua))).filter(Boolean);
   if (targets.length === 0) {
     const data = emptyResult(ticker);
     cache[ticker] = { at: Date.now(), data };
     return { ok: true, data };
   }
+  const xmls = (await pool(targets, 4, (u) => secFetch(u, ua)))
+    .filter((r) => r && r.ok)
+    .map((r) => r.text);
 
   const buyers = new Map();
   const sellers = new Map();
@@ -193,7 +218,7 @@ export default async function handler(req, res) {
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z.\-]{1,6}$/.test(s))
-    .slice(0, 10);
+    .slice(0, MAX_TICKERS); // deepest survivors first; keeps SEC load bounded
 
   if (symbols.length === 0) {
     res.status(200).json({ results: [], failed: [] });
