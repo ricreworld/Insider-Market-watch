@@ -99,6 +99,15 @@ const INSIDER = {
   quiet: { label: "No insider trades", color: "#8B93A7" },
 };
 
+// The full-read synthesis: overall lean, and per-signal tone.
+const LEAN = {
+  constructive: { label: "Signals lean constructive", color: "#7BC98F" },
+  cautious: { label: "Signals lean cautious", color: "#E06C5F" },
+  conflicted: { label: "Signals conflict", color: "#F5C664" },
+  neutral: { label: "Nothing decisive", color: "#8B93A7" },
+};
+const TONE = { positive: "#7BC98F", negative: "#E06C5F", neutral: "#8B93A7" };
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -278,6 +287,43 @@ Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 2
 {"snapshot":{"what":"what the company does, plain language","model":"how it actually makes money","edge":"its competitive edge, or the lack of one","health":"financial health in plain words"},"checklist":{"valuation":"pass|fail|unknown","growth":"pass|fail|unknown","health":"pass|fail|unknown","moat":"pass|fail|unknown","sentiment":"pass|fail|unknown"},"technicals":{"trend":"up|down|sideways","levels":"key support and resistance in plain words","volume":"volume behavior lately","read":"likely scenarios, not predictions"},"news":[{"headline":"plain headline","shortTerm":"possible short term effect","longTerm":"possible long term effect","source":"publication","age":"how recent"}],"biggestRisk":"the single biggest risk in one line","confidence":"low|medium|high"}`;
 }
 
+// The full read. The apex synthesis: every avenue the app collects for
+// one ticker, reasoned together into a single honest picture, where the
+// signals agree, where they fight, and the bottom line. It is fed the
+// real insider Form 4 and options put/call data the app already pulled,
+// and searches the web for price, drawdown, news, and crowd. It reasons
+// hard but never crosses into a buy, sell, or hold call, the decision
+// stays the user's.
+function fullReadPrompt(name, ticker, dateStr, insider, puts) {
+  const insiderLine = insider
+    ? `Insider Form 4 (last ~5 months, SEC verified): ${insider.buyers} insider(s) bought about $${Math.round(insider.boughtUsd).toLocaleString()}, ${insider.sellers} sold about $${Math.round(insider.soldUsd).toLocaleString()}. Net read: ${insider.verdict}.${insider.topBuyer ? ` Biggest buyer: ${insider.topBuyer.name}.` : ""}`
+    : "Insider Form 4: no data available.";
+  const putsLine = puts
+    ? `Options (yesterday, verified): ${puts.putVol?.toLocaleString?.() || puts.putVol} puts vs ${puts.callVol?.toLocaleString?.() || puts.callVol} calls, ratio ${typeof puts.ratio === "number" ? puts.ratio.toFixed(2) : puts.ratio} puts per call.`
+    : "Options positioning: no data available.";
+  return `${BRIEF}
+
+The full read. Today is ${dateStr}. Reason across EVERY available signal for ${name} (${ticker}) into one honest synthesis. Two of the signals are already verified from real filings and are handed to you below, treat their numbers as fact, do not change them:
+
+${insiderLine}
+${putsLine}
+
+Now search the web to fill in the rest: current price and how far it is off its 52-week high, the real reason it is where it is (news, earnings, catalyst), and what the retail crowd is saying if anything.
+
+Then reason across all of it. Your job is synthesis, not a recommendation:
+1. Give a short, honest bottom line: what the weight of the evidence actually says right now.
+2. lean is the overall tenor, NOT advice: constructive (signals mostly point up), cautious (mostly down), conflicted (signals fight each other), or neutral (nothing decisive).
+3. For each signal, one plain sentence on what it says and whether its tone is positive, negative, or neutral.
+4. Call out explicitly where the signals AGREE and where they CONFLICT, that tension is the most useful part.
+5. State the single biggest risk to the read.
+
+Never a buy, sell, or hold call. Never a price target. This is a research synthesis for the user's own judgment.
+
+Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 22 words.
+
+{"bottomLine":"the honest one or two sentence read","lean":"constructive|cautious|conflicted|neutral","signals":[{"name":"Price / drawdown","says":"what it says","tone":"positive|negative|neutral"},{"name":"Insider Form 4","says":"what it says","tone":"positive|negative|neutral"},{"name":"Options positioning","says":"what it says","tone":"positive|negative|neutral"},{"name":"News / catalyst","says":"what it says","tone":"positive|negative|neutral"},{"name":"Crowd","says":"what it says","tone":"positive|negative|neutral"}],"agree":"where the signals line up","conflict":"where they disagree","biggestRisk":"the single biggest risk to this read","confidence":"low|medium|high"}`;
+}
+
 // Mode six, daily brief. The ten minute morning routine as one button:
 // market mood, driving themes, watchlist news, and a discipline check.
 function briefPrompt(dateStr, tickers) {
@@ -429,6 +475,8 @@ function extractJson(text) {
   if (picks) return { picks, note: "" };
   const dips = salvageArray(clean, "dips");
   if (dips) return { dips, note: "" };
+  const signals = salvageArray(clean, "signals");
+  if (signals) return { signals, note: "" };
   const reads = salvageArray(clean, "reads");
   if (reads) return { reads, note: "" };
   throw new Error("unparseable json");
@@ -1048,6 +1096,8 @@ export default function MarketPulse() {
   const [dipsLoading, setDipsLoading] = useState(false);
   const [deep, setDeep] = useState(null);
   const [deepLoading, setDeepLoading] = useState(false);
+  const [fullRead, setFullRead] = useState(null);
+  const [fullReadLoading, setFullReadLoading] = useState(false);
   const [brief, setBrief] = useState(null);
   const [briefRun, setBriefRun] = useState(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -1343,6 +1393,7 @@ export default function MarketPulse() {
     setFocus({ ...item, events: [], note: "" });
     setOwnedCheck(null);
     setDeep(null);
+    setFullRead(null);
     setError("");
     try {
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -1360,6 +1411,7 @@ export default function MarketPulse() {
     setOwnedCheck({ ...item, supports: [], weakens: [], note: "" });
     setFocus(null);
     setDeep(null);
+    setFullRead(null);
     setError("");
     try {
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -1387,6 +1439,34 @@ export default function MarketPulse() {
       setError(e.fatal ? e.message : `The deep dive on ${item.ticker} did not come back clean. Try it again.`);
     }
     setDeepLoading(false);
+  }
+
+  async function runFullRead(item) {
+    setFullReadLoading(true);
+    setFullRead({ ...item, data: null });
+    setDeep(null);
+    setFocus(null);
+    setOwnedCheck(null);
+    setError("");
+    try {
+      // Pull the two verified structured signals first (insider Form 4
+      // and options put/call), then hand them to the AI to reason across
+      // together with what it searches for price, news, and crowd.
+      const [insiderData, putsData] = await Promise.all([
+        fetch(`/api/insider?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
+        fetch(`/api/puts?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
+      ]);
+      const insider = (insiderData.results || [])[0] || null;
+      const puts = (putsData.results || [])[0] || null;
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const result = await callClaude(fullReadPrompt(item.name, item.ticker, dateStr, insider, puts), 2, 1800);
+      setFullRead({ ...item, data: result, insider, puts });
+      addHistory("scan", [`Full read on ${item.ticker}: ${result.bottomLine || result.lean || "done"}`]);
+    } catch (e) {
+      setFullRead(null);
+      setError(e.fatal ? e.message : `The full read on ${item.ticker} did not come back clean. Try it again.`);
+    }
+    setFullReadLoading(false);
   }
 
   async function runBrief() {
@@ -1756,6 +1836,15 @@ export default function MarketPulse() {
                     {w.ticker} {"\u2192"}
                   </button>
                   <button
+                    onClick={() => runFullRead(w)}
+                    disabled={focusLoading || ownedLoading || deepLoading || fullReadLoading}
+                    className="text-xs px-2 py-1 rounded"
+                    style={{ border: `1px solid ${C.gold}`, color: "#151206", background: C.gold, cursor: "pointer", fontWeight: 600 }}
+                    title={`Full read on ${w.name}: every signal reasoned into one honest picture`}
+                  >
+                    Full read
+                  </button>
+                  <button
                     onClick={() => runDeep(w)}
                     disabled={focusLoading || ownedLoading || deepLoading}
                     className="text-xs px-2 py-1 rounded"
@@ -1850,6 +1939,69 @@ export default function MarketPulse() {
                 <p className="text-xs" style={{ color: C.dim }}>Signals only, both sides shown. The decision is yours.</p>
               </div>
             )}
+          </section>
+        )}
+
+        {fullRead && (
+          <section className="mb-5 rounded-lg p-4" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold" style={{ color: C.gold }}>
+                Full read: {fullRead.name} ({fullRead.ticker})
+              </p>
+              <button onClick={() => setFullRead(null)} className="text-xs px-2 py-1 rounded" style={{ color: C.dim, border: `1px solid ${C.line}`, background: "transparent", cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+            {fullReadLoading ? (
+              <p className="text-sm" style={{ color: C.dim }}>
+                Reasoning across every signal on {fullRead.ticker}: insider Form 4, options, price, news, crowd... about a minute.
+              </p>
+            ) : fullRead.data ? (() => {
+              const d = fullRead.data;
+              const lean = LEAN[d.lean] || LEAN.neutral;
+              return (
+                <div className="space-y-4">
+                  <div className="rounded-lg p-3" style={{ background: C.panelSoft, border: `1px solid ${lean.color}` }}>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: lean.color, border: `1px solid ${lean.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                        {lean.label}
+                      </span>
+                      <ConfidenceMeter level={d.confidence} color={lean.color} />
+                    </div>
+                    <p className="text-sm leading-relaxed" style={{ color: C.text, fontWeight: 600 }}>{d.bottomLine}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs mb-2" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace" }}>SIGNAL BY SIGNAL</p>
+                    <div className="space-y-1.5">
+                      {(d.signals || []).map((s, i) => (
+                        <div key={i} className="flex items-start gap-2 px-3 py-2 rounded-md" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: TONE[s.tone] || C.dim, marginTop: 5, flexShrink: 0 }} />
+                          <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                            <span style={{ color: C.dim }}>{s.name}: </span>{s.says}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2" style={{ gridTemplateColumns: "1fr" }}>
+                    <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                      <span style={{ color: C.green }}>Where they agree: </span>{d.agree}
+                    </p>
+                    <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                      <span style={{ color: C.gold }}>Where they conflict: </span>{d.conflict}
+                    </p>
+                    <p className="text-sm leading-relaxed" style={{ color: C.text }}>
+                      <span style={{ color: C.red }}>Biggest risk to this read: </span>{d.biggestRisk}
+                    </p>
+                  </div>
+                  <p className="text-xs" style={{ color: C.dim }}>
+                    A synthesis of every signal, not a buy, sell, or hold call. The determination is yours.
+                  </p>
+                </div>
+              );
+            })() : null}
           </section>
         )}
 
