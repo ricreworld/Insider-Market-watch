@@ -294,21 +294,25 @@ Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 2
 // and searches the web for price, drawdown, news, and crowd. It reasons
 // hard but never crosses into a buy, sell, or hold call, the decision
 // stays the user's.
-function fullReadPrompt(name, ticker, dateStr, insider, puts) {
+function fullReadPrompt(name, ticker, dateStr, insider, puts, reddit) {
   const insiderLine = insider
     ? `Insider Form 4 (last ~5 months, SEC verified): ${insider.buyers} insider(s) bought about $${Math.round(insider.boughtUsd).toLocaleString()}, ${insider.sellers} sold about $${Math.round(insider.soldUsd).toLocaleString()}. Net read: ${insider.verdict}.${insider.topBuyer ? ` Biggest buyer: ${insider.topBuyer.name}.` : ""}`
     : "Insider Form 4: no data available.";
   const putsLine = puts
     ? `Options (yesterday, verified): ${puts.putVol?.toLocaleString?.() || puts.putVol} puts vs ${puts.callVol?.toLocaleString?.() || puts.callVol} calls, ratio ${typeof puts.ratio === "number" ? puts.ratio.toFixed(2) : puts.ratio} puts per call.`
     : "Options positioning: no data available.";
+  const redditLine = reddit && reddit.mentions24h !== "n/a"
+    ? `Reddit chatter (r/wallstreetbets, r/stocks, r/options, r/pennystocks, verified): ${reddit.mentions24h} mentions in 24h${reddit.surging === true ? " (SURGING vs its baseline)" : ""}, crowd lean ${reddit.sentiment}.${(reddit.topPosts || [])[0] ? ` Top post: "${reddit.topPosts[0].title}".` : ""}`
+    : "Reddit chatter: no notable activity found.";
   return `${BRIEF}
 
-The full read. Today is ${dateStr}. Reason across EVERY available signal for ${name} (${ticker}) into one honest synthesis. Two of the signals are already verified from real filings and are handed to you below, treat their numbers as fact, do not change them:
+The full read. Today is ${dateStr}. Reason across EVERY available signal for ${name} (${ticker}) into one honest synthesis. Three of the signals are already verified from real data and are handed to you below, treat them as fact, do not change the numbers:
 
 ${insiderLine}
 ${putsLine}
+${redditLine}
 
-Now search the web to fill in the rest: current price and how far it is off its 52-week high, the real reason it is where it is (news, earnings, catalyst), and what the retail crowd is saying if anything.
+Now search the web to fill in the rest: current price and how far it is off its 52-week high, and the real reason it is where it is (news, earnings, catalyst). Use the Reddit data above for the crowd signal.
 
 Then reason across all of it. Your job is synthesis, not a recommendation:
 1. Give a short, honest bottom line: what the weight of the evidence actually says right now.
@@ -1452,15 +1456,17 @@ export default function MarketPulse() {
       // Pull the two verified structured signals first (insider Form 4
       // and options put/call), then hand them to the AI to reason across
       // together with what it searches for price, news, and crowd.
-      const [insiderData, putsData] = await Promise.all([
+      const [insiderData, putsData, redditData] = await Promise.all([
         fetch(`/api/insider?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
         fetch(`/api/puts?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
+        fetch(`/api/reddit?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
       ]);
       const insider = (insiderData.results || [])[0] || null;
       const puts = (putsData.results || [])[0] || null;
+      const reddit = (redditData.results || [])[0] || null;
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const result = await callClaude(fullReadPrompt(item.name, item.ticker, dateStr, insider, puts), 2, 1800);
-      setFullRead({ ...item, data: result, insider, puts });
+      const result = await callClaude(fullReadPrompt(item.name, item.ticker, dateStr, insider, puts, reddit), 2, 1800);
+      setFullRead({ ...item, data: result, insider, puts, reddit });
       addHistory("scan", [`Full read on ${item.ticker}: ${result.bottomLine || result.lean || "done"}`]);
     } catch (e) {
       setFullRead(null);
