@@ -11,6 +11,7 @@ import putsHandler from "./api/puts.js";
 import dipsHandler from "./api/dips.js";
 import insiderHandler from "./api/insider.js";
 import redditHandler from "./api/reddit.js";
+import congressHandler from "./api/congress.js";
 
 const PORT = 3001;
 
@@ -53,6 +54,11 @@ const server = http.createServer(async (req, res) => {
 
   if ((req.url || "").split("?")[0] === "/api/reddit") {
     await redditHandler(req, res);
+    return;
+  }
+
+  if ((req.url || "").split("?")[0] === "/api/congress") {
+    await congressHandler(req, res);
     return;
   }
 
