@@ -294,7 +294,7 @@ Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 2
 // and searches the web for price, drawdown, news, and crowd. It reasons
 // hard but never crosses into a buy, sell, or hold call, the decision
 // stays the user's.
-function fullReadPrompt(name, ticker, dateStr, insider, puts, reddit) {
+function fullReadPrompt(name, ticker, dateStr, insider, puts, reddit, congress) {
   const insiderLine = insider
     ? `Insider Form 4 (last ~5 months, SEC verified): ${insider.buyers} insider(s) bought about $${Math.round(insider.boughtUsd).toLocaleString()}, ${insider.sellers} sold about $${Math.round(insider.soldUsd).toLocaleString()}. Net read: ${insider.verdict}.${insider.topBuyer ? ` Biggest buyer: ${insider.topBuyer.name}.` : ""}`
     : "Insider Form 4: no data available.";
@@ -304,6 +304,9 @@ function fullReadPrompt(name, ticker, dateStr, insider, puts, reddit) {
   const redditLine = reddit && reddit.mentions24h !== "n/a"
     ? `Reddit chatter (r/wallstreetbets, r/stocks, r/options, r/pennystocks, verified): ${reddit.mentions24h} mentions in 24h${reddit.surging === true ? " (SURGING vs its baseline)" : ""}, crowd lean ${reddit.sentiment}.${(reddit.topPosts || [])[0] ? ` Top post: "${reddit.topPosts[0].title}".` : ""}`
     : "Reddit chatter: no notable activity found.";
+  const congressLine = congress && congress.length
+    ? `Congressional trades (STOCK Act disclosures, verified from SEC/House/Senate filings): ${congress.slice(0, 4).map((t) => `${t.name} (${t.chamber}) ${t.action} ${t.amount} disclosed ${t.disclosedDate}`).join("; ")}. Note: disclosures lag up to 45 days.`
+    : "Congressional trades: no recent STOCK Act disclosures on this ticker.";
   return `${BRIEF}
 
 The full read. Today is ${dateStr}. Reason across EVERY available signal for ${name} (${ticker}) into one honest synthesis. Three of the signals are already verified from real data and are handed to you below, treat them as fact, do not change the numbers:
@@ -311,8 +314,9 @@ The full read. Today is ${dateStr}. Reason across EVERY available signal for ${n
 ${insiderLine}
 ${putsLine}
 ${redditLine}
+${congressLine}
 
-Now search the web to fill in the rest: current price and how far it is off its 52-week high, and the real reason it is where it is (news, earnings, catalyst). Use the Reddit data above for the crowd signal.
+Now search the web to fill in the rest: current price and how far it is off its 52-week high, and the real reason it is where it is (news, earnings, catalyst). Use the Reddit data above for the crowd signal and the congressional data for the Congress signal.
 
 Then reason across all of it. Your job is synthesis, not a recommendation:
 1. Give a short, honest bottom line: what the weight of the evidence actually says right now.
@@ -325,7 +329,7 @@ Never a buy, sell, or hold call. Never a price target. This is a research synthe
 
 Respond with ONLY valid JSON, no markdown, no preamble. Every text field under 22 words.
 
-{"bottomLine":"the honest one or two sentence read","lean":"constructive|cautious|conflicted|neutral","signals":[{"name":"Price / drawdown","says":"what it says","tone":"positive|negative|neutral"},{"name":"Insider Form 4","says":"what it says","tone":"positive|negative|neutral"},{"name":"Options positioning","says":"what it says","tone":"positive|negative|neutral"},{"name":"News / catalyst","says":"what it says","tone":"positive|negative|neutral"},{"name":"Crowd","says":"what it says","tone":"positive|negative|neutral"}],"agree":"where the signals line up","conflict":"where they disagree","biggestRisk":"the single biggest risk to this read","confidence":"low|medium|high"}`;
+{"bottomLine":"the honest one or two sentence read","lean":"constructive|cautious|conflicted|neutral","signals":[{"name":"Price / drawdown","says":"what it says","tone":"positive|negative|neutral"},{"name":"Insider Form 4","says":"what it says","tone":"positive|negative|neutral"},{"name":"Options positioning","says":"what it says","tone":"positive|negative|neutral"},{"name":"News / catalyst","says":"what it says","tone":"positive|negative|neutral"},{"name":"Crowd","says":"what it says","tone":"positive|negative|neutral"},{"name":"Congress","says":"what it says, or none found","tone":"positive|negative|neutral"}],"agree":"where the signals line up","conflict":"where they disagree","biggestRisk":"the single biggest risk to this read","confidence":"low|medium|high"}`;
 }
 
 // Mode six, daily brief. The ten minute morning routine as one button:
@@ -1456,17 +1460,19 @@ export default function MarketPulse() {
       // Pull the two verified structured signals first (insider Form 4
       // and options put/call), then hand them to the AI to reason across
       // together with what it searches for price, news, and crowd.
-      const [insiderData, putsData, redditData] = await Promise.all([
+      const [insiderData, putsData, redditData, congressData] = await Promise.all([
         fetch(`/api/insider?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
         fetch(`/api/puts?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
         fetch(`/api/reddit?symbols=${encodeURIComponent(item.ticker)}`).then((r) => r.json()).catch(() => ({ results: [] })),
+        fetch(`/api/congress?symbols=${encodeURIComponent(item.ticker)}&days=90`).then((r) => r.json()).catch(() => ({ trades: [] })),
       ]);
       const insider = (insiderData.results || [])[0] || null;
       const puts = (putsData.results || [])[0] || null;
       const reddit = (redditData.results || [])[0] || null;
+      const congress = congressData.trades || [];
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const result = await callClaude(fullReadPrompt(item.name, item.ticker, dateStr, insider, puts, reddit), 2, 1800);
-      setFullRead({ ...item, data: result, insider, puts, reddit });
+      const result = await callClaude(fullReadPrompt(item.name, item.ticker, dateStr, insider, puts, reddit, congress), 2, 1800);
+      setFullRead({ ...item, data: result, insider, puts, reddit, congress });
       addHistory("scan", [`Full read on ${item.ticker}: ${result.bottomLine || result.lean || "done"}`]);
     } catch (e) {
       setFullRead(null);
