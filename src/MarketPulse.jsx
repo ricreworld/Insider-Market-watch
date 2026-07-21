@@ -108,6 +108,13 @@ const LEAN = {
 };
 const TONE = { positive: "#7BC98F", negative: "#E06C5F", neutral: "#8B93A7" };
 
+// Congressional trade direction colors.
+const CONGRESS_ACTION = {
+  buy: { label: "BUY", color: "#7BC98F" },
+  sell: { label: "SELL", color: "#E06C5F" },
+  exchange: { label: "EXCHANGE", color: "#F5C664" },
+};
+
 const CONF_LEVELS = { low: 1, medium: 2, high: 3 };
 
 const SCOPES = {
@@ -1106,6 +1113,10 @@ export default function MarketPulse() {
   const [deepLoading, setDeepLoading] = useState(false);
   const [fullRead, setFullRead] = useState(null);
   const [fullReadLoading, setFullReadLoading] = useState(false);
+  const [congress, setCongress] = useState([]);
+  const [congressLoading, setCongressLoading] = useState(false);
+  const [congressAt, setCongressAt] = useState(null);
+  const [congressNote, setCongressNote] = useState("");
   const [brief, setBrief] = useState(null);
   const [briefRun, setBriefRun] = useState(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -1531,6 +1542,30 @@ export default function MarketPulse() {
     } catch (e) {}
   }
 
+  async function loadCongress() {
+    setCongressLoading(true);
+    setError("");
+    try {
+      const r = await fetch("/api/congress?days=60&limit=150");
+      const data = await r.json();
+      setCongress(data.trades || []);
+      setCongressAt(new Date().toLocaleString());
+      const failed = data.failed || [];
+      const src = (data.meta && data.meta.sources) || {};
+      const parts = [];
+      if (src.senate && !src.senate.ok) parts.push("Senate feed unavailable right now");
+      if (src.house && !src.house.ok) parts.push("House feed unavailable right now");
+      setCongressNote(
+        (data.trades || []).length === 0 && parts.length === 0
+          ? "No congressional trades disclosed in this window."
+          : parts.join("; ")
+      );
+    } catch (e) {
+      setCongressNote("Could not reach the congressional disclosure sources. Try again in a moment.");
+    }
+    setCongressLoading(false);
+  }
+
   // Everything the system finds gets remembered, so past days can be
   // reviewed and the good signals separated from the noise over time.
   function addHistory(type, lines) {
@@ -1803,6 +1838,13 @@ export default function MarketPulse() {
               style={{ background: tab === "wire" ? "rgba(123,201,143,0.14)" : "transparent", border: `1px solid ${tab === "wire" ? C.green : C.line}`, color: tab === "wire" ? C.green : C.dim, cursor: "pointer" }}
             >
               Live wire
+            </button>
+            <button
+              onClick={() => { setTab("congress"); setError(""); if (congress.length === 0 && !congressLoading) loadCongress(); }}
+              className="px-3 py-1.5 rounded-full text-sm"
+              style={{ background: tab === "congress" ? "rgba(176,143,232,0.14)" : "transparent", border: `1px solid ${tab === "congress" ? C.violet : C.line}`, color: tab === "congress" ? C.violet : C.dim, cursor: "pointer" }}
+            >
+              Capitol trades
             </button>
             <button
               onClick={() => { setTab("history"); setError(""); }}
@@ -2598,6 +2640,70 @@ export default function MarketPulse() {
                 </div>
               )}
             </section>
+          </>
+        )}
+
+        {tab === "congress" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(176,143,232,0.06)", border: `1px solid ${C.violet}`, color: C.dim }}>
+              <span style={{ color: C.violet }}>How this works: </span>
+              U.S. senators and representatives must disclose their stock trades under the STOCK Act. This reads those filings straight from the official Senate and House disclosure sites, the same public record Capitol Trades is built on, no scraping, no key. Buys in green, sells in red, with the amount range, the trade date, and a link to the filing. One honest limit: the law lets them disclose up to 45 days after the trade, so this is context, not an early signal, and it can never be fresher than the filing itself.
+            </div>
+            <div className="mb-4 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={loadCongress}
+                disabled={congressLoading}
+                className="text-xs px-2.5 py-1.5 rounded"
+                style={{ border: `1px solid ${C.violet}`, color: C.violet, background: "transparent", cursor: "pointer" }}
+              >
+                {congressLoading ? "Pulling filings..." : "Refresh filings"}
+              </button>
+              {congressAt && (
+                <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Pulled {congressAt}</span>
+              )}
+            </div>
+            {congressNote && (
+              <p className="text-xs mb-3" style={{ color: C.dim }}>{congressNote}</p>
+            )}
+            {!congressLoading && congress.length === 0 && !congressNote && (
+              <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                <p className="text-base" style={{ color: C.text }}>No filings pulled yet.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Refresh filings to pull recent congressional stock trades from the official disclosures.</p>
+              </div>
+            )}
+            {congress.length > 0 && (
+              <div className="space-y-2">
+                {congress.map((t, i) => {
+                  const act = CONGRESS_ACTION[t.action] || { label: (t.action || "n/a").toUpperCase(), color: C.dim };
+                  const tickerKnown = t.ticker && t.ticker !== "n/a";
+                  return (
+                    <div key={i} className="rounded-lg px-3 py-2 flex items-start gap-2 flex-wrap" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: act.color, border: `1px solid ${act.color}`, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {act.label}
+                      </span>
+                      {tickerKnown && (
+                        <TickerChip company={{ ticker: t.ticker, name: t.ticker }} starred={watch.some((w) => w.ticker === t.ticker)} onToggle={toggleWatch} />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm leading-snug" style={{ color: C.text }}>
+                          <span style={{ fontWeight: 600 }}>{t.name}</span>
+                          <span style={{ color: C.dim }}> · {t.chamber} · {t.amount}</span>
+                        </p>
+                        <p className="text-xs" style={{ color: C.dim }}>
+                          {!tickerKnown && t.asset && t.asset !== "n/a" ? `${t.asset} · ` : ""}
+                          traded {t.txDate}, disclosed {t.disclosedDate}
+                          {t.owner && t.owner !== "n/a" ? ` · ${t.owner}` : ""}
+                          {t.link && t.link !== "n/a" ? " · " : ""}
+                          {t.link && t.link !== "n/a" && (
+                            <a href={t.link} target="_blank" rel="noreferrer" style={{ color: C.soon }}>filing</a>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 
