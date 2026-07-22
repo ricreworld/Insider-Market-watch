@@ -76,6 +76,7 @@ const HIST = {
   puts: { label: "Put pressure", color: "#E06C5F" },
   tip: { label: "Grapevine tip", color: "#F5C664" },
   dips: { label: "Dip hunt", color: "#FF8A3D" },
+  value: { label: "Value screen", color: "#F5C664" },
 };
 
 const SENTIMENT = {
@@ -107,6 +108,13 @@ const LEAN = {
   neutral: { label: "Nothing decisive", color: "#8B93A7" },
 };
 const TONE = { positive: "#7BC98F", negative: "#E06C5F", neutral: "#8B93A7" };
+
+// Value-screen AI read: is the cheapness a real bargain or a value trap.
+const VALUE_READ = {
+  bargain: { label: "Looks like a real bargain", color: "#7BC98F" },
+  trap: { label: "Looks like a value trap", color: "#E06C5F" },
+  unclear: { label: "Genuinely unclear", color: "#8B93A7" },
+};
 
 // Congressional trade direction colors.
 const CONGRESS_ACTION = {
@@ -148,6 +156,14 @@ const DIP_LINES = [
   "Separating overreaction from real deterioration...",
   "Checking whether the drop already priced in the damage...",
   "Building scorecards, almost done...",
+];
+
+const VALUE_LINES = [
+  "Pulling real fundamentals for the value universe...",
+  "Grading valuation against sector peers...",
+  "Checking cash generation and balance sheet...",
+  "Running the value-trap defense on each name...",
+  "Scoring and ranking, almost done...",
 ];
 
 const WIRE_LINES = [
@@ -245,6 +261,33 @@ Never a buy, sell, or hold call. Only a research read on why the price moved and
 Respond with ONLY valid JSON, no markdown, no preamble. One entry per ticker above, every text field under 20 words.
 
 {"reads":[{"ticker":"TICK","why":"the real verified reason it fell","read":"overreaction|structural|unclear","stabilized":"yes|no|unclear","risk":"the single biggest risk if this read is wrong","source":"where verified"}],"note":""}`;
+}
+
+function valuePrompt(dateStr, screened) {
+  const list = screened
+    .map((s) => {
+      const pe = s.pe != null ? `P/E ${s.pe.toFixed(1)}` : "P/E n/a";
+      const fcf = s.fcfYield != null ? `FCF yield ${(s.fcfYield * 100).toFixed(1)}%` : "FCF n/a";
+      const gr = s.revenueGrowth != null ? `rev growth ${(s.revenueGrowth * 100).toFixed(1)}%` : "growth n/a";
+      return `${s.ticker} (${s.name}, ${s.sector}): $${s.price.toFixed(2)}, ${pe}, ${fcf}, ${gr}, score ${s.score}.`;
+    })
+    .join("\n");
+  return `${BRIEF}
+
+Value screen read. Today is ${dateStr}. Below are established companies that passed a quantitative value screen on REAL fundamentals already measured from filings. The metrics are facts, do not change them, do not add tickers.
+
+${list}
+
+A stock can look statistically cheap because it is genuinely undervalued, or because the market correctly sees the business declining, a classic value trap. For each ticker, search the web and judge which it is:
+1. verdict: bargain if the low valuation looks unjustified and the business is intact or improving, trap if the cheapness reflects real, worsening deterioration, unclear if the evidence is mixed. Be honest with unclear.
+2. why: the actual reason it is cheap right now, in plain words (out of favor sector, temporary earnings dip, secular decline, lawsuit overhang). Never invent.
+3. risk: the single biggest risk if your verdict is wrong.
+
+Never a buy, sell, or hold call. Only a research read on whether the cheapness is opportunity or warning.
+
+Respond with ONLY valid JSON, no markdown, no preamble. One entry per ticker above, every text field under 20 words.
+
+{"reads":[{"ticker":"TICK","verdict":"bargain|trap|unclear","why":"the real reason it is cheap","risk":"the single biggest risk if this read is wrong","source":"where verified"}],"note":""}`;
 }
 
 function focusPrompt(name, ticker, dateStr, moveContext) {
@@ -770,6 +813,82 @@ function DipCard({ cand, watch, onToggle }) {
   );
 }
 
+function ValueCard({ cand, watch, onToggle }) {
+  // cand carries REAL measured fundamentals (price, marketCap, pe, fcfYield,
+  // revenueGrowth, score, fair-value range) plus, once the AI read runs, a
+  // bargain/trap verdict with whyCheap/readRisk.
+  const read = VALUE_READ[cand.verdict] || (cand.verdict ? VALUE_READ.unclear : null);
+  const barColor = read ? read.color : C.gold;
+  const pct = (v) => (v == null ? "n/a" : `${(v * 100).toFixed(1)}%`);
+  const midpoint = cand.fairValueLow != null && cand.fairValueHigh != null ? (cand.fairValueLow + cand.fairValueHigh) / 2 : null;
+  return (
+    <div className="rounded-lg overflow-hidden flex" style={{ background: C.panel, border: `1px solid ${barColor}` }}>
+      <div style={{ width: 4, background: barColor, flexShrink: 0 }} />
+      <div className="flex-1 p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TickerChip company={cand} starred={watch.some((w) => w.ticker === cand.ticker)} onToggle={onToggle} />
+            <span className="text-sm" style={{ color: C.text, fontWeight: 600 }}>{cand.name}</span>
+            <span className="text-sm" style={{ color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${cand.price.toFixed(2)}</span>
+          </div>
+          <span className="text-sm px-2 py-1 rounded" style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
+            score {cand.score} · {cand.conviction}/10
+          </span>
+        </div>
+
+        <p className="mt-2 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {cand.sector}
+          {cand.marketCapText ? ` · ${cand.marketCapText}` : ""}
+          {cand.pe != null ? ` · P/E ${cand.pe.toFixed(1)}` : " · P/E n/a"}
+          {cand.sectorMedianPE != null ? ` vs sector ${cand.sectorMedianPE}` : ""}
+        </p>
+
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: C.dim }}>
+          <span>FCF yield: <span style={{ color: C.text }}>{pct(cand.fcfYield)}</span></span>
+          <span>Rev growth: <span style={{ color: C.text }}>{pct(cand.revenueGrowth)}</span></span>
+          <span>Current ratio: <span style={{ color: C.text }}>{cand.currentRatio != null ? cand.currentRatio.toFixed(2) : "n/a"}</span></span>
+          <span>Debt/equity: <span style={{ color: C.text }}>{cand.debtToEquity != null ? `${cand.debtToEquity.toFixed(2)}x` : "n/a"}</span></span>
+        </div>
+
+        {cand.fairValueLow != null && cand.fairValueHigh != null && (
+          <p className="mt-2 text-sm" style={{ color: C.text, opacity: 0.9 }}>
+            <span style={{ color: C.dim }}>Fair-value estimate: </span>
+            ${cand.fairValueLow.toFixed(2)}–${cand.fairValueHigh.toFixed(2)}
+            {cand.upside != null && (
+              <span style={{ color: cand.upside >= 0 ? C.green : C.red }}> ({cand.upside >= 0 ? "+" : ""}{(cand.upside * 100).toFixed(0)}% to midpoint)</span>
+            )}
+          </p>
+        )}
+
+        {read ? (
+          <>
+            <div className="mt-3">
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: read.color, border: `1px solid ${read.color}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                {read.label}
+              </span>
+            </div>
+            {cand.whyCheap && (
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
+                <span style={{ color: C.dim }}>Why it's cheap: </span>{cand.whyCheap}
+              </p>
+            )}
+            {cand.readRisk && (
+              <p className="mt-2 text-sm" style={{ color: C.red, opacity: 0.9 }}>
+                <span style={{ color: C.dim }}>Biggest risk if this read is wrong: </span>{cand.readRisk}
+              </p>
+            )}
+            {cand.readSource && (
+              <p className="mt-1 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Read verified via {cand.readSource}</p>
+            )}
+          </>
+        ) : (
+          <p className="mt-3 text-xs" style={{ color: C.dim }}>Real fundamentals and score from live filings data. No AI bargain/trap read for this one, run the screen again to retry.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Live watcher (Finnhub WebSocket) ----------
 
 const WINDOW_MS = 5 * 60 * 1000;
@@ -1123,6 +1242,11 @@ export default function MarketPulse() {
   const [dipsReadNote, setDipsReadNote] = useState("");
   const [dipsRun, setDipsRun] = useState(null);
   const [dipsLoading, setDipsLoading] = useState(false);
+  const [value, setValue] = useState([]);
+  const [valueNote, setValueNote] = useState("");
+  const [valueReadNote, setValueReadNote] = useState("");
+  const [valueRun, setValueRun] = useState(null);
+  const [valueLoading, setValueLoading] = useState(false);
   const [deep, setDeep] = useState(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const [fullRead, setFullRead] = useState(null);
@@ -1193,6 +1317,16 @@ export default function MarketPulse() {
           setDips(valid);
           setDipsNote(valid.length ? (parsed.note || "") : "");
           setDipsRun(valid.length ? (parsed.at || null) : null);
+        }
+      } catch (e) {}
+      try {
+        const v = await storage.get("pulse-value");
+        if (v) {
+          const parsed = JSON.parse(v.value);
+          const valid = (parsed.value || []).filter((s) => typeof s.price === "number" && typeof s.score === "number");
+          setValue(valid);
+          setValueNote(valid.length ? (parsed.note || "") : "");
+          setValueRun(valid.length ? (parsed.at || null) : null);
         }
       } catch (e) {}
       try {
@@ -1429,6 +1563,69 @@ export default function MarketPulse() {
       setError("Could not reach the price data source for the dip screen. Try again in a moment.");
     }
     setDipsLoading(false);
+  }
+
+  async function runValue() {
+    setValueLoading(true);
+    setError("");
+    setLoadLine(0);
+    try {
+      // Step 1: real fundamentals and a real quantitative score, computed
+      // server-side from live filings data. No AI, no fabrication.
+      const extra = watch.map((w) => w.ticker).join(",");
+      const r = await fetch(`/api/value${extra ? `?extra=${encodeURIComponent(extra)}` : ""}`);
+      const screen = await r.json();
+      const scored = (screen.candidates || []).map((s) => ({
+        ...s,
+        marketCapText: fmtMarketCap(s.marketCap),
+      }));
+      const at = new Date().toLocaleString();
+      // Show the real, scored screen immediately, before spending on AI.
+      setValue(scored);
+      setValueNote(screen.note || "");
+      setValueRun(at);
+      if (scored.length === 0) {
+        setValueReadNote("");
+        setValueLoading(false);
+        try {
+          await storage.set("pulse-value", JSON.stringify({ value: [], note: screen.note || "", at }));
+        } catch (e) {}
+        return;
+      }
+
+      // Step 2: the only AI step, and it only interprets, never invents a
+      // number. It judges each cheap name as a real bargain or a value trap.
+      const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      let merged = scored;
+      try {
+        const result = await callClaude(valuePrompt(dateStr, scored), 2, 2000);
+        const byTicker = {};
+        (result.reads || []).forEach((rd) => { if (rd.ticker) byTicker[rd.ticker.toUpperCase()] = rd; });
+        if (Object.keys(byTicker).length === 0) {
+          setValueReadNote("AI read returned no entries. The scores below still stand on their own.");
+        } else {
+          setValueReadNote("");
+        }
+        merged = scored.map((s) => {
+          const rd = byTicker[s.ticker.toUpperCase()];
+          return rd ? { ...s, verdict: rd.verdict, whyCheap: rd.why, readRisk: rd.risk, readSource: rd.source } : s;
+        });
+        setValue(merged);
+      } catch (e) {
+        setValueReadNote(`AI read unavailable: ${e.message} The real scores below still work with no AI key.`);
+      }
+
+      try {
+        await storage.set("pulse-value", JSON.stringify({ value: merged, note: screen.note || "", at }));
+      } catch (e) {}
+      addHistory("value", merged.map((s) => {
+        const v = s.verdict ? `, ${s.verdict}` : "";
+        return `${s.ticker} $${s.price.toFixed(2)}, score ${s.score}${v}`;
+      }));
+    } catch (e) {
+      setError("Could not reach the data source for the value screen. Try again in a moment.");
+    }
+    setValueLoading(false);
   }
 
   async function runFocus(item, moveContext) {
@@ -1685,8 +1882,8 @@ export default function MarketPulse() {
     .map((k) => ({ key: k, ...URGENCY[k], items: events.filter((e) => e.urgency === k) }))
     .filter((g) => g.items.length > 0);
 
-  const busy = loading || diamondLoading || dipsLoading || briefLoading || picksLoading;
-  const busyLines = diamondLoading ? DIAMOND_LINES : dipsLoading ? DIP_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
+  const busy = loading || diamondLoading || dipsLoading || valueLoading || briefLoading || picksLoading;
+  const busyLines = diamondLoading ? DIAMOND_LINES : dipsLoading ? DIP_LINES : valueLoading ? VALUE_LINES : briefLoading ? BRIEF_LINES : picksLoading ? WIRE_LINES : LOADING_LINES;
 
   return (
     <div
@@ -1784,6 +1981,15 @@ export default function MarketPulse() {
               >
                 {dipsLoading ? "Reading the drops..." : "Hunt for dips"}
               </button>
+            ) : tab === "value" ? (
+              <button
+                onClick={runValue}
+                disabled={busy}
+                className="px-4 py-2.5 rounded-lg text-sm font-semibold"
+                style={{ background: busy ? C.panel : C.gold, color: busy ? C.dim : "#151206", border: `1px solid ${busy ? C.line : C.gold}`, cursor: busy ? "default" : "pointer" }}
+              >
+                {valueLoading ? "Screening..." : "Screen for value"}
+              </button>
             ) : tab === "brief" ? (
               <button
                 onClick={runBrief}
@@ -1850,6 +2056,13 @@ export default function MarketPulse() {
               Dip scanner
             </button>
             <button
+              onClick={() => { setTab("value"); setError(""); }}
+              className="px-3 py-1.5 rounded-full text-sm"
+              style={{ background: tab === "value" ? "rgba(245,198,100,0.14)" : "transparent", border: `1px solid ${tab === "value" ? C.gold : C.line}`, color: tab === "value" ? C.gold : C.dim, cursor: "pointer" }}
+            >
+              Value screen
+            </button>
+            <button
               onClick={() => { setTab("brief"); setError(""); }}
               className="px-3 py-1.5 rounded-full text-sm"
               style={{ background: tab === "brief" ? "rgba(95,178,232,0.14)" : "transparent", border: `1px solid ${tab === "brief" ? C.soon : C.line}`, color: tab === "brief" ? C.soon : C.dim, cursor: "pointer" }}
@@ -1888,9 +2101,9 @@ export default function MarketPulse() {
                   {v.label}
                 </button>
               ))}
-            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "brief" ? briefRun : tab === "wire" ? picksRun : null) && (
+            {(tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "value" ? valueRun : tab === "brief" ? briefRun : tab === "wire" ? picksRun : null) && (
               <span className="text-xs ml-auto" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
-                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "brief" ? briefRun : picksRun}
+                Last run {tab === "pulse" ? lastRun : tab === "diamonds" ? diamondRun : tab === "dips" ? dipsRun : tab === "value" ? valueRun : tab === "brief" ? briefRun : picksRun}
               </span>
             )}
           </div>
@@ -2296,6 +2509,39 @@ export default function MarketPulse() {
               <div className="space-y-3">
                 {dips.map((cand, i) => (
                   <DipCard key={i} cand={cand} watch={watch} onToggle={toggleWatch} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "value" && (
+          <>
+            <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(245,198,100,0.06)", border: `1px solid ${C.gold}`, color: C.dim }}>
+              <span style={{ color: C.gold }}>How this works: </span>
+              a fundamental value screen, on real numbers. It pulls live fundamentals for a universe of established names, then scores each one the way a disciplined value investor would: valuation against its sector peers, free-cash-flow yield, balance-sheet health, and revenue growth as a value-trap defense. The score and the fair-value range are computed from real filings data, never guessed, and your starred tickers are added in. Then one AI pass reads each cheap name and judges whether the low price is a genuine bargain or a value trap, because a low multiple alone is never a signal, sometimes the market is cheap for a reason. Never a buy or sell call.
+            </div>
+            {!valueLoading && value.length === 0 && !valueNote && (
+              <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
+                <p className="text-base" style={{ color: C.text }}>No screen yet.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Screen for value. It pulls real fundamentals for established names, scores them on valuation, cash flow, balance sheet and growth, and reads whether each cheap name is a bargain or a trap.</p>
+              </div>
+            )}
+            {!valueLoading && valueNote && value.length === 0 && (
+              <div className="rounded-lg p-5" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
+                <p className="text-sm" style={{ color: C.text }}>{valueNote}</p>
+              </div>
+            )}
+            {!valueLoading && valueNote && value.length > 0 && (
+              <p className="text-xs mb-2" style={{ color: C.gold, opacity: 0.9 }}>{valueNote}</p>
+            )}
+            {!valueLoading && valueReadNote && value.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: C.red, opacity: 0.85 }}>{valueReadNote}</p>
+            )}
+            {!valueLoading && value.length > 0 && (
+              <div className="space-y-3">
+                {value.map((cand, i) => (
+                  <ValueCard key={i} cand={cand} watch={watch} onToggle={toggleWatch} />
                 ))}
               </div>
             )}
