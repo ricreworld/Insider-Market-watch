@@ -831,9 +831,16 @@ function ValueCard({ cand, watch, onToggle }) {
             <span className="text-sm" style={{ color: C.text, fontWeight: 600 }}>{cand.name}</span>
             <span className="text-sm" style={{ color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>${cand.price.toFixed(2)}</span>
           </div>
-          <span className="text-sm px-2 py-1 rounded" style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
-            score {cand.score} · {cand.conviction}/10
-          </span>
+          <div className="flex items-center gap-2">
+            {cand.pinned && (
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "'IBM Plex Mono', monospace" }}>
+                ★ your pick
+              </span>
+            )}
+            <span className="text-sm px-2 py-1 rounded" style={{ color: C.gold, border: `1px solid ${C.gold}`, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
+              score {cand.score} · {cand.conviction}/10
+            </span>
+          </div>
         </div>
 
         <p className="mt-2 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -2519,7 +2526,7 @@ export default function MarketPulse() {
           <>
             <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(245,198,100,0.06)", border: `1px solid ${C.gold}`, color: C.dim }}>
               <span style={{ color: C.gold }}>How this works: </span>
-              a fundamental value screen, on real numbers. It pulls live fundamentals for a universe of established names, then scores each one the way a disciplined value investor would: valuation against its sector peers, free-cash-flow yield, balance-sheet health, and revenue growth as a value-trap defense. The score and the fair-value range are computed from real filings data, never guessed, and your starred tickers are added in. Then one AI pass reads each cheap name and judges whether the low price is a genuine bargain or a value trap, because a low multiple alone is never a signal, sometimes the market is cheap for a reason. Never a buy or sell call.
+              a fundamental value screen, on real numbers. It pulls live fundamentals for a universe of established names, then scores each one the way a disciplined value investor would: valuation against its sector peers, free-cash-flow yield, balance-sheet health, and revenue growth as a value-trap defense. The score and the fair-value range are computed from real filings data, never guessed. Any ticker you star always shows here with its own read, even a small name that sits below the universe's size gate, so nothing you care about drops off. Then one AI pass reads each cheap name and judges whether the low price is a genuine bargain or a value trap, because a low multiple alone is never a signal, sometimes the market is cheap for a reason. Never a buy or sell call.
             </div>
             {!valueLoading && value.length === 0 && !valueNote && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
