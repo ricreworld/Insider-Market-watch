@@ -192,11 +192,17 @@ Respond with ONLY valid JSON. No markdown, no fences, no preamble. At most 4 eve
 function diamondPrompt(dateStr) {
   return `${BRIEF}
 
-Mode four, diamond scan. Today is ${dateStr}. Remember: a low price alone is never a signal, only the catalyst and the checks matter.
+Mode four, diamond scan. Today is ${dateStr}. Remember: a low price alone is never a signal. What matters is a real reason the stock is appealing, plus the checks.
 
-Search the web for small and lower-priced US-listed stocks, trading at $25 a share or below, where something concrete makes the stock genuinely interesting right now. The price ceiling is just the filter; the real question is what makes it worth a look. That can be a REAL, DATED, VERIFIABLE upcoming catalyst within roughly the next 90 days, or a live situation the market has not fully priced yet. This spans true penny stocks under $5, small-caps in the $5 to $10 range, and larger small-caps up to $25, like a small medical-device, biotech, or specialty company with a pending FDA decision, contract, ruling, or confirmed earnings event. Valid catalysts and hooks: FDA decision dates or trial readouts, government contract awards or decisions, court rulings, earnings with confirmed dates, regulatory approvals, major product launches, unusual insider buying clusters, a fresh partnership or guidance change. NOT valid: rumors, social media hype, undated speculation. The cheaper and smaller the stock, the more speculative, so weight the risk accordingly.
+Search the web for small and lower-priced US-listed stocks, trading at $25 a share or below, that are genuinely appealing right now for a concrete, verifiable reason. The $25 price is just the filter. Your job is to decide what makes each name interesting, the way an INGN (Inogen) type name is interesting: a real company with an actual product and real revenue, not a shell, that has been beaten down or overlooked and now has something specific working in its favor. Look for names that fit one or more of these appeal profiles:
+- a real, dated, verifiable catalyst within roughly the next 90 days (FDA decision or trial readout, government contract award, court ruling, confirmed earnings date, regulatory approval, major product launch)
+- a genuine turnaround underway: returning to growth, cutting costs, new management, a new product cycle, or a cleared-up problem that had crushed the stock
+- a beaten-down established niche business, medical-device, biotech, industrial, or specialty, trading cheap versus its own history or its fundamentals, where the drop looks like an overreaction
+- a credible acquisition or takeover angle
+- unusual insider buying clusters, a fresh partnership, or a real guidance change
+Decide the appeal yourself from what you actually find, and state it plainly. NOT valid: rumors, social media hype, undated speculation, or a low price with no real story. The cheaper and smaller the stock, the more speculative, so weight the risk accordingly.
 
-HARD GATE: if you cannot verify the catalyst and its approximate date from a real source, do not include the stock at all.
+HARD GATE: if you cannot name a concrete, verifiable reason the stock is appealing from a real source, do not include the stock at all. If the appeal is a dated catalyst, verify the date.
 
 For each candidate, run this trap check and mark each item pass, fail, or unknown based on what you find:
 - catalyst: is the catalyst confirmed and dated
@@ -208,7 +214,7 @@ Be honest with unknown. Never mark pass without evidence. This is not investment
 
 Respond with ONLY valid JSON, no markdown, no preamble. At most 3 candidates, every text field under 20 words.
 
-{"candidates":[{"name":"Company","ticker":"TICK","price":"about $7.40","catalyst":"what the event is","date":"when, like mid Aug 2026","checks":{"catalyst":"pass|fail|unknown","cash":"pass|fail|unknown","insiders":"pass|fail|unknown","dilution":"pass|fail|unknown"},"risk":"the single biggest risk in one line","source":"where verified"}],"note":"if no clean candidates found, say so plainly, else empty string"}`;
+{"candidates":[{"name":"Company","ticker":"TICK","price":"about $7.40","appeal":"in plain words, what makes this stock interesting right now","catalyst":"the specific dated event if there is one, else n/a","date":"when, like mid Aug 2026, or n/a","checks":{"catalyst":"pass|fail|unknown","cash":"pass|fail|unknown","insiders":"pass|fail|unknown","dilution":"pass|fail|unknown"},"risk":"the single biggest risk in one line","source":"where verified"}],"note":"if no clean candidates found, say so plainly, else empty string"}`;
 }
 
 // Mode nine, dip scanner. The ZTS pattern, broadened: any size, any
@@ -661,9 +667,17 @@ function DiamondCard({ cand, watch, onToggle }) {
           </span>
         </div>
 
-        <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
-          <span style={{ color: C.dim }}>Catalyst: </span>{cand.catalyst} <span style={{ color: C.gold }}>({cand.date})</span>
-        </p>
+        {cand.appeal && (
+          <p className="mt-2 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
+            <span style={{ color: C.dim }}>Why it's interesting: </span>{cand.appeal}
+          </p>
+        )}
+        {cand.catalyst && !/^n\/?a$/i.test(String(cand.catalyst).trim()) && (
+          <p className="mt-1 text-sm leading-relaxed" style={{ color: C.text, opacity: 0.9 }}>
+            <span style={{ color: C.dim }}>Catalyst: </span>{cand.catalyst}
+            {cand.date && !/^n\/?a$/i.test(String(cand.date).trim()) && <span style={{ color: C.gold }}> ({cand.date})</span>}
+          </p>
+        )}
 
         <div className="mt-3 flex flex-wrap gap-2">
           {["catalyst", "cash", "insiders", "dilution"].map((k) => (
@@ -1315,7 +1329,11 @@ export default function MarketPulse() {
       try {
         await storage.set("pulse-diamonds", JSON.stringify({ candidates: sorted, note: result.note || "", at }));
       } catch (e) {}
-      addHistory("diamonds", sorted.map((c) => `${c.ticker} ${c.price}: ${c.catalyst} (${c.date})`));
+      addHistory("diamonds", sorted.map((c) => {
+        const why = c.appeal || c.catalyst || "";
+        const dated = c.date && !/^n\/?a$/i.test(String(c.date).trim()) ? ` (${c.date})` : "";
+        return `${c.ticker} ${c.price}: ${why}${dated}`;
+      }));
     } catch (e) {
       setError(e.fatal ? e.message : "The diamond hunt did not come back clean, even after a retry. Run it again.");
     }
