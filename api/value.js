@@ -285,8 +285,13 @@ export default async function handler(req, res) {
   Object.keys(bySector).forEach((sec) => { sectorMedianPE[sec] = median(bySector[sec]); });
   const overallMedianPE = median(rows.map((x) => x.pe));
 
+  // A starred ticker is one the user deliberately asked for. It always
+  // shows, with its real fundamentals and score, even if it is too small
+  // or too pricey for the default gates, and it is never cut by the top-N.
+  const starred = new Set(extra);
+
   const scored = rows
-    .filter((s) => s.price >= MIN_PRICE && s.price <= MAX_PRICE && s.marketCap >= MIN_MARKET_CAP)
+    .filter((s) => starred.has(s.ticker) || (s.price >= MIN_PRICE && s.price <= MAX_PRICE && s.marketCap >= MIN_MARKET_CAP))
     .map((s) => {
       const medPE = sectorMedianPE[s.sector] || overallMedianPE;
       const score = scoreCandidate(s, medPE);
@@ -300,12 +305,18 @@ export default async function handler(req, res) {
         fairValueLow: fv.low,
         fairValueHigh: fv.high,
         upside,
+        pinned: starred.has(s.ticker),
       };
     })
     .sort((a, b) => b.score - a.score);
 
-  const candidates = scored.slice(0, MAX_RESULTS);
+  // Pin every starred name at the top; fill the rest with the top-scoring
+  // universe names up to the cap.
+  const pinned = scored.filter((s) => s.pinned);
+  const rest = scored.filter((s) => !s.pinned).slice(0, MAX_RESULTS);
+  const candidates = [...pinned, ...rest];
 
+  const missing = extra.filter((t) => !candidates.some((c) => c.ticker === t));
   const data = {
     candidates,
     universeSize: tickers.length,
@@ -313,8 +324,10 @@ export default async function handler(req, res) {
     asOf: new Date().toISOString(),
     note: candidates.length === 0
       ? `Screened ${fetched} names; none cleared the size and price gates today.`
-      : candidates[0].score < 35
-      ? "Nothing scored strongly today. These are the least-weak names, not strong bargains, treat the low scores as a warning."
+      : missing.length
+      ? `Could not pull fundamentals for your starred ${missing.join(", ")} right now; try again in a moment.`
+      : (rest[0] && rest[0].score < 35)
+      ? "Nothing in the universe scored strongly today. Treat the low scores as a warning, not a bargain."
       : "",
   };
 
