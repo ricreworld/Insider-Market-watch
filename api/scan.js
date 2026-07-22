@@ -21,20 +21,26 @@ export const config = { maxDuration: 60 };
 // lands on a working one.
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 
-async function callGeminiModel(apiKey, model, prompt, tokens) {
+async function callGeminiModel(apiKey, model, prompt, tokens, useSearch = true) {
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      maxOutputTokens: tokens + 512,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  };
+  // Web-search grounding is the fragile part: the "-latest" alias can
+  // resolve to a model on one project (often a paid one) that rejects the
+  // google_search tool with a 400 invalid-argument, while the same request
+  // is valid on another. When that happens the caller retries without it.
+  if (useSearch) body.tools = [{ google_search: {} }];
+
   const r = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }],
-        generationConfig: {
-          maxOutputTokens: tokens + 512,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
+      body: JSON.stringify(body),
     }
   );
   const data = await r.json();
@@ -49,18 +55,29 @@ async function callGeminiModel(apiKey, model, prompt, tokens) {
     .map((p) => p.text || "")
     .join("\n");
   if (!text) throw new Error(`Gemini ${model} returned no text`);
-  return { content: [{ type: "text", text }], provider: `gemini:${model}` };
+  return { content: [{ type: "text", text }], provider: `gemini:${model}${useSearch ? "" : " (no search)"}` };
 }
 
 // Try each Gemini model until one answers. A 429 (quota) on one model
-// still lets a lighter model with its own allowance succeed.
+// still lets a lighter model with its own allowance succeed. A 400
+// (invalid argument) usually means this key/project rejects the search
+// tool, so retry the same model once WITHOUT grounding before moving on;
+// the read leans on model knowledge, which is fine since our own routes
+// already supply the real numbers.
 async function callGemini(apiKey, prompt, tokens) {
   let last;
   for (const model of GEMINI_MODELS) {
     try {
-      return await callGeminiModel(apiKey, model, prompt, tokens);
+      return await callGeminiModel(apiKey, model, prompt, tokens, true);
     } catch (e) {
       last = e;
+      if (e.status === 400) {
+        try {
+          return await callGeminiModel(apiKey, model, prompt, tokens, false);
+        } catch (e2) {
+          last = e2;
+        }
+      }
     }
   }
   throw last || new Error("all Gemini models failed");
