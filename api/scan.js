@@ -14,25 +14,29 @@
 // limit was cutting it off, which looked like "no AI read returned".
 export const config = { maxDuration: 60 };
 
-// The dated models (gemini-2.5-flash etc.) are retired for new Google
-// accounts. The "-latest" aliases stay valid as Google rotates versions,
-// and confirmed working with current auth keys. Falls through fuller ->
-// lighter (bigger quota) -> 2.0 so a busy or quota-capped model still
-// lands on a working one.
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
+// Model candidates, tried in order until one answers. The "-latest"
+// aliases rotate with Google's versions; the dated ones are added as
+// fallbacks because which models a given key can reach varies by project
+// and tier, so a paid key that rejects one alias may still serve another.
+const GEMINI_MODELS = [
+  "gemini-flash-latest",
+  "gemini-2.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-2.0-flash",
+];
 
-async function callGeminiModel(apiKey, model, prompt, tokens, useSearch = true) {
+async function callGeminiModel(apiKey, model, prompt, tokens, opts = {}) {
+  const { useSearch = true, useThinking = true } = opts;
+  const generationConfig = { maxOutputTokens: tokens + 512 };
+  // thinkingConfig is only valid on models that support thinking; some
+  // aliases resolve to models that reject it with a 400. Droppable.
+  if (useThinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      maxOutputTokens: tokens + 512,
-      thinkingConfig: { thinkingBudget: 0 },
-    },
+    generationConfig,
   };
-  // Web-search grounding is the fragile part: the "-latest" alias can
-  // resolve to a model on one project (often a paid one) that rejects the
-  // google_search tool with a 400 invalid-argument, while the same request
-  // is valid on another. When that happens the caller retries without it.
+  // Web-search grounding is the other fragile field: some models/projects
+  // reject the google_search tool with a 400. Also droppable.
   if (useSearch) body.tools = [{ google_search: {} }];
 
   const r = await fetch(
@@ -55,28 +59,34 @@ async function callGeminiModel(apiKey, model, prompt, tokens, useSearch = true) 
     .map((p) => p.text || "")
     .join("\n");
   if (!text) throw new Error(`Gemini ${model} returned no text`);
-  return { content: [{ type: "text", text }], provider: `gemini:${model}${useSearch ? "" : " (no search)"}` };
+  const tag = `${useSearch ? "" : " (no search)"}${useThinking ? "" : " (min)"}`;
+  return { content: [{ type: "text", text }], provider: `gemini:${model}${tag}` };
 }
 
-// Try each Gemini model until one answers. A 429 (quota) on one model
-// still lets a lighter model with its own allowance succeed. A 400
-// (invalid argument) usually means this key/project rejects the search
-// tool, so retry the same model once WITHOUT grounding before moving on;
-// the read leans on model knowledge, which is fine since our own routes
-// already supply the real numbers.
+// Try each Gemini model until one answers. On a 400 (invalid argument),
+// the request body has a field this model/project rejects, so escalate to
+// progressively more minimal requests: full (grounded + thinking) ->
+// ungrounded -> bare minimum (no tools, no thinking config). A bare
+// generateContent is accepted by essentially every Gemini model, so if
+// even that 400s the problem is the key or endpoint, not the body. A
+// non-400 error (quota, model-not-found) skips straight to the next model.
+const GEMINI_VARIANTS = [
+  { useSearch: true, useThinking: true },
+  { useSearch: false, useThinking: true },
+  { useSearch: false, useThinking: false },
+];
+
 async function callGemini(apiKey, prompt, tokens) {
   let last;
   for (const model of GEMINI_MODELS) {
-    try {
-      return await callGeminiModel(apiKey, model, prompt, tokens, true);
-    } catch (e) {
-      last = e;
-      if (e.status === 400) {
-        try {
-          return await callGeminiModel(apiKey, model, prompt, tokens, false);
-        } catch (e2) {
-          last = e2;
-        }
+    for (const variant of GEMINI_VARIANTS) {
+      try {
+        return await callGeminiModel(apiKey, model, prompt, tokens, variant);
+      } catch (e) {
+        last = e;
+        // Only escalate the body on an invalid-argument. Anything else
+        // (quota, not-found, auth) will not be fixed by a smaller body.
+        if (e.status !== 400) break;
       }
     }
   }
