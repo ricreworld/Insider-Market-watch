@@ -130,18 +130,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Gemini keys, tried in order: the free-tier key first, then a paid
-  // Gemini key that takes over the moment the free daily quota is spent.
-  const gemKeys = [
-    { key: process.env.GEMINI_API_KEY, label: "Gemini free" },
-    { key: process.env.GEMINI_PAID_API_KEY, label: "Gemini paid" },
-  ].filter((g) => g.key);
+  // One Gemini key. Prefer GEMINI_PAID_API_KEY; fall back to GEMINI_API_KEY
+  // so it works whichever slot the paid key sits in. No free/paid chain.
+  const gemKey = process.env.GEMINI_PAID_API_KEY || process.env.GEMINI_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
   const antKey = process.env.ANTHROPIC_API_KEY;
-  if (gemKeys.length === 0 && !groqKey && !antKey) {
+  if (!gemKey && !groqKey && !antKey) {
     res.status(500).json({
       error:
-        "AI scans need an API key on the server. Add GEMINI_API_KEY (free), GEMINI_PAID_API_KEY (paid Gemini fallback), GROQ_API_KEY (free), or ANTHROPIC_API_KEY (paid). The Live wire, dip screen, watchlist, and live watcher all work without one.",
+        "AI scans need an API key on the server. Add GEMINI_API_KEY (or GEMINI_PAID_API_KEY), GROQ_API_KEY, or ANTHROPIC_API_KEY. The Live wire, dip screen, watchlist, and live watcher all work without one.",
     });
     return;
   }
@@ -155,13 +152,13 @@ export default async function handler(req, res) {
   const tokens = Math.min(Math.max(parseInt(maxTokens, 10) || 1000, 256), 2000);
   const errors = [];
 
-  // Gemini first: free key, then paid key when free is exhausted.
-  for (const g of gemKeys) {
+  // Gemini first, with the grounded -> ungrounded retry handled inside.
+  if (gemKey) {
     try {
-      res.status(200).json(await callGemini(g.key, prompt, tokens));
+      res.status(200).json(await callGemini(gemKey, prompt, tokens));
       return;
     } catch (e) {
-      errors.push(`${g.label}: ${e.message}`);
+      errors.push(`Gemini: ${e.message}`);
     }
   }
   if (groqKey) {
