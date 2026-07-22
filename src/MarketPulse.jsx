@@ -135,7 +135,7 @@ const LOADING_LINES = [
 ];
 
 const DIAMOND_LINES = [
-  "Hunting sub $5 stocks with real dated catalysts...",
+  "Hunting stocks $10 and under with real dated catalysts...",
   "Checking cash runway and dilution history...",
   "Looking for insider buying in SEC filings...",
   "Killing the trap stocks, keeping candidates...",
@@ -194,7 +194,7 @@ function diamondPrompt(dateStr) {
 
 Mode four, diamond scan. Today is ${dateStr}. Remember: a low price alone is never a signal, only the catalyst and the checks matter.
 
-Search the web for US-listed stocks currently trading under $5 that have a REAL, DATED, VERIFIABLE upcoming catalyst within roughly the next 90 days. Valid catalysts: FDA decision dates or trial readouts, government contract awards or decisions, court rulings, earnings with confirmed dates, regulatory approvals, major product launches. NOT valid: rumors, social media hype, undated speculation.
+Search the web for small and lower-priced US-listed stocks, trading at $10 a share or below, that have a REAL, DATED, VERIFIABLE upcoming catalyst within roughly the next 90 days. This includes both true penny stocks under $5 and small-cap names in the $5 to $10 range, like a small medical-device, biotech, or specialty company with a pending FDA decision, contract, ruling, or confirmed earnings event. Valid catalysts: FDA decision dates or trial readouts, government contract awards or decisions, court rulings, earnings with confirmed dates, regulatory approvals, major product launches. NOT valid: rumors, social media hype, undated speculation. The cheaper and smaller the stock, the more speculative, so weight the risk accordingly.
 
 HARD GATE: if you cannot verify the catalyst and its approximate date from a real source, do not include the stock at all.
 
@@ -208,7 +208,7 @@ Be honest with unknown. Never mark pass without evidence. This is not investment
 
 Respond with ONLY valid JSON, no markdown, no preamble. At most 3 candidates, every text field under 20 words.
 
-{"candidates":[{"name":"Company","ticker":"TICK","price":"about $1.20","catalyst":"what the event is","date":"when, like mid Aug 2026","checks":{"catalyst":"pass|fail|unknown","cash":"pass|fail|unknown","insiders":"pass|fail|unknown","dilution":"pass|fail|unknown"},"risk":"the single biggest risk in one line","source":"where verified"}],"note":"if no clean candidates found, say so plainly, else empty string"}`;
+{"candidates":[{"name":"Company","ticker":"TICK","price":"about $7.40","catalyst":"what the event is","date":"when, like mid Aug 2026","checks":{"catalyst":"pass|fail|unknown","cash":"pass|fail|unknown","insiders":"pass|fail|unknown","dilution":"pass|fail|unknown"},"risk":"the single biggest risk in one line","source":"where verified"}],"note":"if no clean candidates found, say so plainly, else empty string"}`;
 }
 
 // Mode nine, dip scanner. The ZTS pattern, broadened: any size, any
@@ -2222,12 +2222,12 @@ export default function MarketPulse() {
           <>
             <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(176,143,232,0.06)", border: `1px solid ${C.violet}`, color: C.dim }}>
               <span style={{ color: C.violet }}>How this works: </span>
-              only stocks under $5 with a real, dated, verifiable catalyst make the list. That is the hard gate. Then each one gets scored on four trap checks. A 4/4 is rare and worth your attention. A 1/4 just dodged you a bullet. Lottery ticket money only, never rent or ring money.
+              only stocks trading at $10 a share or below with a real, dated, verifiable catalyst make the list. That is the hard gate. It covers true penny stocks and small-caps alike, an INGN-style name with a pending FDA or earnings event fits here. Then each one gets scored on four trap checks. A 4/4 is rare and worth your attention. A 1/4 just dodged you a bullet. Speculative money only, never rent or ring money.
             </div>
             {!diamondLoading && diamonds.length === 0 && !diamondNote && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
                 <p className="text-base" style={{ color: C.text }}>No hunt yet.</p>
-                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for diamonds. It searches for sub $5 stocks with confirmed upcoming catalysts and scores each one.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for diamonds. It searches for stocks $10 and under with confirmed upcoming catalysts and scores each one.</p>
               </div>
             )}
             {!diamondLoading && diamondNote && diamonds.length === 0 && (
@@ -2748,7 +2748,7 @@ export default function MarketPulse() {
           <p className="mb-1" style={{ color: C.gold, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: "2px" }}>
             MARKET PULSE {"·"} THE LEGAL INSIDE SCOOP
           </p>
-          Signals and research scorecards only. Not investment advice, no price predictions, no buy sell or hold recommendations. Sub $5 stocks can lose most of their value fast. Free sources lag real events by minutes to hours.
+          Signals and research scorecards only. Not investment advice, no price predictions, no buy sell or hold recommendations. Small, low-priced stocks can lose most of their value fast. Free sources lag real events by minutes to hours.
         </footer>
       </div>
     </div>
