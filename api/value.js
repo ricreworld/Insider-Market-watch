@@ -159,6 +159,11 @@ async function fetchFundamentals(ticker, auth) {
     const freeCashflow = raw(fin.freeCashflow);
     const revenueGrowth = raw(fin.revenueGrowth);
     const fcfYield = freeCashflow != null && marketCap && marketCap > 0 ? freeCashflow / marketCap : null;
+    // Fallback valuation for unprofitable names that have no P/E: price to
+    // sales and price to book let the screen still judge how cheap a name
+    // is on its revenue and assets.
+    const priceToSales = raw(sd.priceToSalesTrailing12Months) ?? raw(ks.priceToSalesTrailing12Months);
+    const priceToBook = raw(ks.priceToBook) ?? raw(sd.priceToBook);
 
     if (price == null || marketCap == null) return null;
     return {
@@ -168,6 +173,9 @@ async function fetchFundamentals(ticker, auth) {
       price,
       marketCap,
       pe: trailingPE != null && trailingPE > 0 ? trailingPE : null,
+      priceToSales: priceToSales != null && priceToSales > 0 ? priceToSales : null,
+      priceToBook: priceToBook != null && priceToBook > 0 ? priceToBook : null,
+      profitable: trailingPE != null && trailingPE > 0,
       currentRatio,
       debtToEquity,
       fcfYield,
@@ -181,19 +189,35 @@ async function fetchFundamentals(ticker, auth) {
   }
 }
 
-// Ported straight from Ricardo's morning value screener. Real factors,
+// Grade one valuation multiple against its sector median: base points for
+// being in a sane range, a discount bonus for trading below peers, an extra
+// nudge for being outright cheap. Shared by P/E, P/B, and P/S.
+function gradeMultiple(mult, sectorMedian, cheapLevel) {
+  if (mult == null || mult <= 0) return 0;
+  let pts = 12;
+  if (sectorMedian && mult < sectorMedian) {
+    const discount = 1 - mult / sectorMedian;
+    pts += Math.min(18, Math.max(0, discount * 40));
+  }
+  if (mult <= cheapLevel) pts += 5;
+  return pts;
+}
+
+// Ported from Ricardo's morning value screener, then widened. Real factors,
 // real weights: valuation vs sector, cash generation, balance sheet, and a
-// growth check that doubles as a value-trap defense.
-function scoreCandidate(s, sectorMedianPE) {
+// growth check that doubles as a value-trap defense. Profitable names are
+// valued on P/E; unprofitable ones fall back to price-to-book, then
+// price-to-sales, so a beaten-down name with no earnings is still judged on
+// how cheap it is against its assets and revenue instead of being skipped.
+function scoreCandidate(s, medians) {
   let score = 0;
-  // Valuation: up to 35.
-  if (s.pe != null && s.pe > 0 && s.pe <= 25) {
-    score += 12;
-    if (sectorMedianPE && s.pe < sectorMedianPE) {
-      const discount = 1 - s.pe / sectorMedianPE;
-      score += Math.min(18, Math.max(0, discount * 40));
-    }
-    if (s.pe <= 12) score += 5;
+  // Valuation: up to 35, from whichever multiple is available.
+  if (s.pe != null && s.pe > 0 && s.pe <= 40) {
+    score += gradeMultiple(s.pe, medians.pe, 12);
+  } else if (s.priceToBook != null) {
+    score += gradeMultiple(s.priceToBook, medians.pb, 1.0);
+  } else if (s.priceToSales != null) {
+    score += gradeMultiple(s.priceToSales, medians.ps, 1.0);
   }
   // Free cash flow: up to 25.
   if (s.fcfYield != null) {
@@ -221,14 +245,29 @@ function scoreCandidate(s, sectorMedianPE) {
   return Math.round(score * 10) / 10;
 }
 
-function fairValue(s, sectorMedianPE) {
-  if (s.pe == null || s.pe <= 0 || !sectorMedianPE || sectorMedianPE <= 0) return { low: null, high: null };
-  const normalizedPE = Math.min(sectorMedianPE, 25);
-  const midpoint = (s.price * normalizedPE) / s.pe;
-  return {
-    low: Math.round(midpoint * 0.85 * 100) / 100,
-    high: Math.round(midpoint * 1.15 * 100) / 100,
+// Fair value from re-rating the stock to its sector's median multiple.
+// Prefer earnings (P/E); for an unprofitable name, re-rate on book value
+// (P/B) instead, so INGN-style names still get an estimate. Returns the
+// basis used so the card can label it honestly.
+function fairValue(s, medians) {
+  const estimate = (mult, sectorMedian, cap) => {
+    if (mult == null || mult <= 0 || !sectorMedian || sectorMedian <= 0) return null;
+    const normalized = cap ? Math.min(sectorMedian, cap) : sectorMedian;
+    const midpoint = (s.price * normalized) / mult;
+    return {
+      low: Math.round(midpoint * 0.85 * 100) / 100,
+      high: Math.round(midpoint * 1.15 * 100) / 100,
+    };
   };
+  if (s.pe != null && s.pe > 0) {
+    const fv = estimate(s.pe, medians.pe, 25);
+    if (fv) return { ...fv, basis: "earnings" };
+  }
+  if (s.priceToBook != null) {
+    const fv = estimate(s.priceToBook, medians.pb, 3);
+    if (fv) return { ...fv, basis: "book value" };
+  }
+  return { low: null, high: null, basis: null };
 }
 
 function conviction(score) {
@@ -275,15 +314,20 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Sector median P/E from what we actually fetched, so the valuation
-  // score is graded against peers, not an absolute cutoff.
-  const bySector = {};
-  rows.forEach((s) => {
-    if (s.pe != null) (bySector[s.sector] = bySector[s.sector] || []).push(s.pe);
-  });
-  const sectorMedianPE = {};
-  Object.keys(bySector).forEach((sec) => { sectorMedianPE[sec] = median(bySector[sec]); });
-  const overallMedianPE = median(rows.map((x) => x.pe));
+  // Sector medians for each valuation multiple, from what we actually
+  // fetched, so a name is graded against peers, not an absolute cutoff.
+  const medianBy = (field) => {
+    const bySector = {};
+    rows.forEach((s) => {
+      if (s[field] != null) (bySector[s.sector] = bySector[s.sector] || []).push(s[field]);
+    });
+    const out = { __all: median(rows.map((x) => x[field])) };
+    Object.keys(bySector).forEach((sec) => { out[sec] = median(bySector[sec]); });
+    return out;
+  };
+  const medPEBy = medianBy("pe");
+  const medPBBy = medianBy("priceToBook");
+  const medPSBy = medianBy("priceToSales");
 
   // A starred ticker is one the user deliberately asked for. It always
   // shows, with its real fundamentals and score, even if it is too small
@@ -293,17 +337,24 @@ export default async function handler(req, res) {
   const scored = rows
     .filter((s) => starred.has(s.ticker) || (s.price >= MIN_PRICE && s.price <= MAX_PRICE && s.marketCap >= MIN_MARKET_CAP))
     .map((s) => {
-      const medPE = sectorMedianPE[s.sector] || overallMedianPE;
-      const score = scoreCandidate(s, medPE);
-      const fv = fairValue(s, medPE);
+      const medians = {
+        pe: medPEBy[s.sector] || medPEBy.__all,
+        pb: medPBBy[s.sector] || medPBBy.__all,
+        ps: medPSBy[s.sector] || medPSBy.__all,
+      };
+      const score = scoreCandidate(s, medians);
+      const fv = fairValue(s, medians);
       const upside = fv.low != null && fv.high != null ? ((fv.low + fv.high) / 2) / s.price - 1 : null;
+      const valuationBasis = s.pe != null && s.pe > 0 ? "P/E" : s.priceToBook != null ? "P/B" : s.priceToSales != null ? "P/S" : "none";
       return {
         ...s,
         score,
         conviction: conviction(score),
-        sectorMedianPE: medPE != null ? Math.round(medPE * 10) / 10 : null,
+        sectorMedianPE: medians.pe != null ? Math.round(medians.pe * 10) / 10 : null,
+        valuationBasis,
         fairValueLow: fv.low,
         fairValueHigh: fv.high,
+        fairValueBasis: fv.basis,
         upside,
         pinned: starred.has(s.ticker),
       };

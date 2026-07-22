@@ -266,10 +266,13 @@ Respond with ONLY valid JSON, no markdown, no preamble. One entry per ticker abo
 function valuePrompt(dateStr, screened) {
   const list = screened
     .map((s) => {
-      const pe = s.pe != null ? `P/E ${s.pe.toFixed(1)}` : "P/E n/a";
+      const val = s.pe != null ? `P/E ${s.pe.toFixed(1)}`
+        : s.priceToBook != null ? `unprofitable, P/B ${s.priceToBook.toFixed(2)}`
+        : s.priceToSales != null ? `unprofitable, P/S ${s.priceToSales.toFixed(2)}`
+        : "no earnings";
       const fcf = s.fcfYield != null ? `FCF yield ${(s.fcfYield * 100).toFixed(1)}%` : "FCF n/a";
       const gr = s.revenueGrowth != null ? `rev growth ${(s.revenueGrowth * 100).toFixed(1)}%` : "growth n/a";
-      return `${s.ticker} (${s.name}, ${s.sector}): $${s.price.toFixed(2)}, ${pe}, ${fcf}, ${gr}, score ${s.score}.`;
+      return `${s.ticker} (${s.name}, ${s.sector}): $${s.price.toFixed(2)}, ${val}, ${fcf}, ${gr}, score ${s.score}.`;
     })
     .join("\n");
   return `${BRIEF}
@@ -846,8 +849,13 @@ function ValueCard({ cand, watch, onToggle }) {
         <p className="mt-2 text-xs" style={{ color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>
           {cand.sector}
           {cand.marketCapText ? ` · ${cand.marketCapText}` : ""}
-          {cand.pe != null ? ` · P/E ${cand.pe.toFixed(1)}` : " · P/E n/a"}
-          {cand.sectorMedianPE != null ? ` vs sector ${cand.sectorMedianPE}` : ""}
+          {cand.pe != null
+            ? ` · P/E ${cand.pe.toFixed(1)}${cand.sectorMedianPE != null ? ` vs sector ${cand.sectorMedianPE}` : ""}`
+            : cand.priceToBook != null
+            ? ` · unprofitable · P/B ${cand.priceToBook.toFixed(2)}`
+            : cand.priceToSales != null
+            ? ` · unprofitable · P/S ${cand.priceToSales.toFixed(2)}`
+            : " · no earnings, no book value"}
         </p>
 
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: C.dim }}>
@@ -859,7 +867,7 @@ function ValueCard({ cand, watch, onToggle }) {
 
         {cand.fairValueLow != null && cand.fairValueHigh != null && (
           <p className="mt-2 text-sm" style={{ color: C.text, opacity: 0.9 }}>
-            <span style={{ color: C.dim }}>Fair-value estimate: </span>
+            <span style={{ color: C.dim }}>Fair-value estimate{cand.fairValueBasis ? ` (on ${cand.fairValueBasis})` : ""}: </span>
             ${cand.fairValueLow.toFixed(2)}–${cand.fairValueHigh.toFixed(2)}
             {cand.upside != null && (
               <span style={{ color: cand.upside >= 0 ? C.green : C.red }}> ({cand.upside >= 0 ? "+" : ""}{(cand.upside * 100).toFixed(0)}% to midpoint)</span>
