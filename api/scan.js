@@ -59,20 +59,21 @@ async function callGeminiModel(apiKey, model, prompt, tokens, opts = {}) {
     .map((p) => p.text || "")
     .join("\n");
   if (!text) throw new Error(`Gemini ${model} returned no text`);
-  const tag = `${useSearch ? "" : " (no search)"}${useThinking ? "" : " (min)"}`;
-  return { content: [{ type: "text", text }], provider: `gemini:${model}${tag}` };
+  return { content: [{ type: "text", text }], provider: `gemini:${model}${useSearch ? "" : " (no search)"}` };
 }
 
 // Try each Gemini model until one answers. On a 400 (invalid argument),
-// the request body has a field this model/project rejects, so escalate to
-// progressively more minimal requests: full (grounded + thinking) ->
-// ungrounded -> bare minimum (no tools, no thinking config). A bare
-// generateContent is accepted by essentially every Gemini model, so if
-// even that 400s the problem is the key or endpoint, not the body. A
+// the request body has a field this model/project rejects, so walk the
+// variants. Web search is what the fresh-news scans (diamond, pulse, wire)
+// actually depend on, so we PRIORITIZE keeping the google_search tool and
+// instead drop the thinkingConfig, which is the field that most commonly
+// 400s (thinkingBudget:0 is invalid on some models). Only if a grounded
+// request cannot be made at all do we fall back to an ungrounded one.
+// Order: grounded no-thinking -> grounded with-thinking -> ungrounded. A
 // non-400 error (quota, model-not-found) skips straight to the next model.
 const GEMINI_VARIANTS = [
+  { useSearch: true, useThinking: false },
   { useSearch: true, useThinking: true },
-  { useSearch: false, useThinking: true },
   { useSearch: false, useThinking: false },
 ];
 
