@@ -135,7 +135,7 @@ const LOADING_LINES = [
 ];
 
 const DIAMOND_LINES = [
-  "Hunting stocks $10 and under with real dated catalysts...",
+  "Hunting stocks $25 and under with a real dated catalyst or hook...",
   "Checking cash runway and dilution history...",
   "Looking for insider buying in SEC filings...",
   "Killing the trap stocks, keeping candidates...",
@@ -194,7 +194,7 @@ function diamondPrompt(dateStr) {
 
 Mode four, diamond scan. Today is ${dateStr}. Remember: a low price alone is never a signal, only the catalyst and the checks matter.
 
-Search the web for small and lower-priced US-listed stocks, trading at $10 a share or below, that have a REAL, DATED, VERIFIABLE upcoming catalyst within roughly the next 90 days. This includes both true penny stocks under $5 and small-cap names in the $5 to $10 range, like a small medical-device, biotech, or specialty company with a pending FDA decision, contract, ruling, or confirmed earnings event. Valid catalysts: FDA decision dates or trial readouts, government contract awards or decisions, court rulings, earnings with confirmed dates, regulatory approvals, major product launches. NOT valid: rumors, social media hype, undated speculation. The cheaper and smaller the stock, the more speculative, so weight the risk accordingly.
+Search the web for small and lower-priced US-listed stocks, trading at $25 a share or below, where something concrete makes the stock genuinely interesting right now. The price ceiling is just the filter; the real question is what makes it worth a look. That can be a REAL, DATED, VERIFIABLE upcoming catalyst within roughly the next 90 days, or a live situation the market has not fully priced yet. This spans true penny stocks under $5, small-caps in the $5 to $10 range, and larger small-caps up to $25, like a small medical-device, biotech, or specialty company with a pending FDA decision, contract, ruling, or confirmed earnings event. Valid catalysts and hooks: FDA decision dates or trial readouts, government contract awards or decisions, court rulings, earnings with confirmed dates, regulatory approvals, major product launches, unusual insider buying clusters, a fresh partnership or guidance change. NOT valid: rumors, social media hype, undated speculation. The cheaper and smaller the stock, the more speculative, so weight the risk accordingly.
 
 HARD GATE: if you cannot verify the catalyst and its approximate date from a real source, do not include the stock at all.
 
@@ -2222,12 +2222,12 @@ export default function MarketPulse() {
           <>
             <div className="rounded-lg p-3 mb-4 text-xs leading-relaxed" style={{ background: "rgba(176,143,232,0.06)", border: `1px solid ${C.violet}`, color: C.dim }}>
               <span style={{ color: C.violet }}>How this works: </span>
-              only stocks trading at $10 a share or below with a real, dated, verifiable catalyst make the list. That is the hard gate. It covers true penny stocks and small-caps alike, an INGN-style name with a pending FDA or earnings event fits here. Then each one gets scored on four trap checks. A 4/4 is rare and worth your attention. A 1/4 just dodged you a bullet. Speculative money only, never rent or ring money.
+              only stocks trading at $25 a share or below make the list, and each one needs a real reason to be interesting, a dated, verifiable catalyst or a live situation the market has not fully priced. That is the hard gate. It covers true penny stocks, mid small-caps, and larger small-caps up to $25, an INGN-style name with a pending FDA or earnings event fits here. Then each one gets scored on four trap checks. A 4/4 is rare and worth your attention. A 1/4 just dodged you a bullet. Speculative money only, never rent or ring money.
             </div>
             {!diamondLoading && diamonds.length === 0 && !diamondNote && (
               <div className="rounded-lg p-8 text-center" style={{ background: C.panelSoft, border: `1px dashed ${C.line}` }}>
                 <p className="text-base" style={{ color: C.text }}>No hunt yet.</p>
-                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for diamonds. It searches for stocks $10 and under with confirmed upcoming catalysts and scores each one.</p>
+                <p className="text-sm mt-1" style={{ color: C.dim }}>Hit Hunt for diamonds. It searches for stocks $25 and under with a confirmed catalyst or a live hook and scores each one.</p>
               </div>
             )}
             {!diamondLoading && diamondNote && diamonds.length === 0 && (
