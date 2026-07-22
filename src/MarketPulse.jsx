@@ -1316,7 +1316,7 @@ export default function MarketPulse() {
     setLoadLine(0);
     try {
       const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const result = await callClaude(diamondPrompt(dateStr));
+      const result = await callClaude(diamondPrompt(dateStr), 2, 2000);
       const at = new Date().toLocaleString();
       const sorted = (result.candidates || []).sort((a, b) => {
         const sa = Object.values(a.checks || {}).filter((v) => v === "pass").length;
@@ -1335,7 +1335,13 @@ export default function MarketPulse() {
         return `${c.ticker} ${c.price}: ${why}${dated}`;
       }));
     } catch (e) {
-      setError(e.fatal ? e.message : "The diamond hunt did not come back clean, even after a retry. Run it again.");
+      if (e.fatal) setError(e.message);
+      else if (e.message && !/json/i.test(e.message)) {
+        // A real AI-route reason (quota exhausted, timeout, etc). Show it.
+        setError(`The diamond hunt could not reach an AI brain: ${e.message}`);
+      } else {
+        setError("The diamond hunt did not come back clean, even after a retry. Run it again.");
+      }
     }
     setDiamondLoading(false);
   }
