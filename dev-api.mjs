@@ -13,6 +13,7 @@ import insiderHandler from "./api/insider.js";
 import redditHandler from "./api/reddit.js";
 import congressHandler from "./api/congress.js";
 import valueHandler from "./api/value.js";
+import quoteHandler from "./api/quote.js";
 
 const PORT = 3001;
 
@@ -50,6 +51,11 @@ const server = http.createServer(async (req, res) => {
 
   if ((req.url || "").split("?")[0] === "/api/value") {
     await valueHandler(req, res);
+    return;
+  }
+
+  if ((req.url || "").split("?")[0] === "/api/quote") {
+    await quoteHandler(req, res);
     return;
   }
 

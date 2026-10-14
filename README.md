@@ -8,7 +8,7 @@ It never gives investment advice, price predictions, or buy, sell, or hold recom
 
 1. Node.js version 20 or newer installed on your computer.
 2. A key for the AI brain, either a free Gemini key from https://aistudio.google.com or a paid Anthropic key from https://console.anthropic.com. Both stay on the server and never reach the browser. You can also run with neither; only the AI buttons need one.
-3. A free Finnhub API key from https://finnhub.io. This one powers the live price watcher in the browser.
+3. Nothing else. The live price watcher is keyless; it polls free public prices through the server, so there is no Finnhub key to set up anymore.
 4. A free Alpha Vantage key from https://www.alphavantage.co/support/#api-key. This one powers the earnings calendar on the Live wire tab.
 
 ## Setup, step by step
@@ -25,7 +25,7 @@ Step 2. Create your environment file by copying the example.
 cp .env.example .env
 ```
 
-Step 3. Open the new .env file in any text editor and replace the placeholder values with your real Anthropic key, your real Finnhub key, and your email address for SEC_CONTACT_EMAIL. The SEC asks automated tools to identify themselves with a contact when reading its free filing feeds, and any email you own works. Save the file. It is ignored by git on purpose, so your keys never end up in the repository.
+Step 3. Open the new .env file in any text editor and replace the placeholder values with your Gemini key for the AI brain and your email address for SEC_CONTACT_EMAIL. The SEC asks automated tools to identify themselves with a contact when reading its free filing feeds, and any email you own works. Save the file. It is ignored by git on purpose, so your keys never end up in the repository.
 
 Step 4. Start the API server in one terminal.
 
@@ -45,13 +45,13 @@ Step 6. Open the address Vite prints, usually http://localhost:5173. That is it.
 
 The React app lives in src/MarketPulse.jsx. When you run a scan, the browser sends only the prompt text to /api/scan, a small backend route in api/scan.js. That route picks a brain on the server side: Gemini 2.5 Flash with Google Search grounding when GEMINI_API_KEY is set, otherwise the Anthropic API with web search enabled, model claude-sonnet-4-6. If Gemini fails and an Anthropic key exists, it falls back automatically. Quick scans use 1000 max tokens; the deep dive and daily brief ask for more room, capped at 2000 on the server. The response comes back to the browser, where extractJson parses it, including the salvage logic that rescues complete items when a response gets cut off.
 
-Your watchlist, last scan, diamond results, dip results, value screen, daily brief, and Finnhub key are saved in your browser's localStorage under these keys: pulse-watchlist, pulse-last-scan, pulse-diamonds, pulse-dips, pulse-value, pulse-daily-brief, pulse-finnhub-key. Clearing your browser data clears them.
+Your watchlist, last scan, diamond results, dip results, value screen, and daily brief are saved in your browser's localStorage under these keys: pulse-watchlist, pulse-last-scan, pulse-diamonds, pulse-dips, pulse-value, pulse-daily-brief. Clearing your browser data clears them.
 
-The live watcher connects straight from the browser to the Finnhub WebSocket during US market hours, using the key from VITE_FINNHUB_KEY or one you paste into the field.
+The live watcher is keyless. It polls free public prices for your starred tickers through the server's own /api/quote route every twenty seconds during US market hours, computes each name's move over a rolling five-minute window, and alerts you when one moves hard. No API key, nothing exposed in the browser.
 
 ## Running it completely free
 
-The app works with zero paid services. The Live wire tab pulls SEC filings, insider Form 4 filings, press releases, and news feeds, all free, and the server tags items with their tickers on its own using the SEC's free company to ticker file plus the tickers that press releases print in their own headlines. Star any tagged ticker straight from the wire, and the live watcher tracks it in real time on a free Finnhub key. That whole loop costs nothing.
+The app works with zero paid services. The Live wire tab pulls SEC filings, insider Form 4 filings, press releases, and news feeds, all free, and the server tags items with their tickers on its own using the SEC's free company to ticker file plus the tickers that press releases print in their own headlines. Star any tagged ticker straight from the wire, and the keyless live watcher tracks its price in real time through the server. That whole loop costs nothing.
 
 The AI buttons, fresh scan, diamond hunt, deep dive, morning brief, position check, Find the movers, and the dip reads, can run entirely free. The app tries AI brains in a chain so a single exhausted free tier never leaves it dead. First Gemini, with a free key from aistudio.google.com set as GEMINI_API_KEY, which also has web search; when its daily quota on the main model runs low the app automatically falls to lighter Gemini models with their own larger free allowances. Then Groq, a second free brain with no card and generous limits from console.groq.com set as GROQ_API_KEY, which keeps the app running after Gemini is used up, though without live web search. Then the paid Anthropic API, set as ANTHROPIC_API_KEY, as a last resort. With none of them set, the AI buttons explain that plainly instead of failing, and everything else, the Live wire, the dip screen, the watcher, keeps working.
 
@@ -61,7 +61,7 @@ This project is set up for Vercel, which has a free tier that covers everything 
 
 1. Push this repository to GitHub.
 2. Go to https://vercel.com, sign in with GitHub, and import the repository. Vercel detects Vite automatically and picks up the api folder as serverless functions with no extra configuration.
-3. In the project settings on Vercel, under Environment Variables, add VITE_FINNHUB_KEY with your Finnhub key, SEC_CONTACT_EMAIL with your email, ALPHAVANTAGE_API_KEY with your free Alpha Vantage key for the earnings calendar, and for the AI brain add GEMINI_API_KEY with your free Gemini key or ANTHROPIC_API_KEY with your paid Anthropic key, or both to get free first with paid backup.
+3. In the project settings on Vercel, under Environment Variables, add SEC_CONTACT_EMAIL with your email, ALPHAVANTAGE_API_KEY with your free Alpha Vantage key for the earnings calendar, and for the AI brain add GEMINI_PAID_API_KEY (or GEMINI_API_KEY) with your Gemini key. The live watcher needs no key. GROQ_API_KEY and ANTHROPIC_API_KEY are optional AI fallbacks.
 4. Deploy. Your app will be live at the URL Vercel gives you, and the Anthropic key stays server side.
 
 ## The four modes
