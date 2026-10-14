@@ -28,7 +28,7 @@ const UA = "Mozilla/5.0 (MarketPulse personal research dashboard)";
 
 // Cache the whole screen for 20 minutes so repeated hits do not hammer
 // Yahoo (which rate-limits) and stay well within serverless time limits.
-let cache = { at: 0, data: null };
+let cache = { at: 0, rows: null };
 const TTL_MS = 20 * 60 * 1000;
 
 function num(v) {
@@ -133,16 +133,27 @@ export default async function handler(req, res) {
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z.\-]{1,6}$/.test(s));
 
-  // Serve cache when fresh and no custom extras were requested.
-  if (extra.length === 0 && cache.data && Date.now() - cache.at < TTL_MS) {
-    res.status(200).json({ ...cache.data, cached: true });
-    return;
+  // Universe drawdowns: serve from cache when fresh, else fetch once and
+  // cache the raw charts. Starred extras are always fetched live, but that
+  // is only the few names the user added, not the whole universe, so a
+  // user with starred tickers no longer re-pulls all ~45 names every run.
+  let universeCharts;
+  let universeCached = false;
+  if (cache.rows && Date.now() - cache.at < TTL_MS) {
+    universeCharts = cache.rows;
+    universeCached = true;
+  } else {
+    universeCharts = (await pool(UNIVERSE, 12, fetchChart)).filter(Boolean);
+    if (universeCharts.length > 0) cache = { at: Date.now(), rows: universeCharts };
   }
 
-  const tickers = Array.from(new Set([...UNIVERSE, ...extra]));
+  const have = new Set(universeCharts.map((c) => c.ticker));
+  const toFetch = extra.filter((t) => !have.has(t));
+  const extraCharts = toFetch.length > 0
+    ? (await pool(toFetch, 12, fetchChart)).filter(Boolean)
+    : [];
 
-  // Wave 1: real drawdown for the whole universe, concurrency-capped.
-  const charts = (await pool(tickers, 12, fetchChart)).filter(Boolean);
+  const charts = [...universeCharts, ...extraCharts];
   const fetched = charts.length;
 
   // Screen: down at least minDrawdown off the 52wk high.
@@ -157,9 +168,10 @@ export default async function handler(req, res) {
 
   const data = {
     candidates: survivors,
-    universeSize: tickers.length,
+    universeSize: UNIVERSE.length,
     fetched,
     minDrawdown,
+    cached: universeCached,
     asOf: new Date().toISOString(),
     note: charts.length === 0
       ? "Could not reach the price data source. Try again in a moment."
@@ -168,6 +180,6 @@ export default async function handler(req, res) {
       : "",
   };
 
-  if (extra.length === 0) cache = { at: Date.now(), data };
+  // The universe charts are already cached above; nothing else to store.
   res.status(200).json(data);
 }

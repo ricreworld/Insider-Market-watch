@@ -14,6 +14,27 @@
 // limit was cutting it off, which looked like "no AI read returned".
 export const config = { maxDuration: 60 };
 
+// Every upstream call gets a hard timeout. Without one, a stalled provider
+// (grounded search routinely hangs) holds the whole function open until
+// Vercel kills it at maxDuration, which reads to the user as "no AI
+// returned" and invites a re-click that stacks another 60s function.
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      const err = new Error(`timed out after ${ms}ms`);
+      err.status = 504;
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Model candidates, tried in order until one answers. The "-latest"
 // aliases rotate with Google's versions; the dated ones are added as
 // fallbacks because which models a given key can reach varies by project
@@ -39,13 +60,17 @@ async function callGeminiModel(apiKey, model, prompt, tokens, opts = {}) {
   // reject the google_search tool with a 400. Also droppable.
   if (useSearch) body.tools = [{ google_search: {} }];
 
-  const r = await fetch(
+  // Grounded search needs more headroom than a plain completion, but both
+  // must return well inside maxDuration so the ladder can try another
+  // variant/model if one stalls.
+  const r = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(body),
-    }
+    },
+    useSearch ? 28000 : 16000
   );
   const data = await r.json();
   if (!r.ok) {
@@ -98,7 +123,7 @@ async function callGemini(apiKey, prompt, tokens) {
 // carries the weight; fine for reading well-known names, weaker on fresh
 // breaking specifics.
 async function callGroq(apiKey, prompt, tokens) {
-  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const r = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -106,7 +131,7 @@ async function callGroq(apiKey, prompt, tokens) {
       max_tokens: tokens,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 20000);
   const data = await r.json();
   if (!r.ok) {
     throw new Error((data.error && data.error.message) || `Groq error ${r.status}`);
@@ -117,7 +142,7 @@ async function callGroq(apiKey, prompt, tokens) {
 }
 
 async function callAnthropic(apiKey, prompt, tokens) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

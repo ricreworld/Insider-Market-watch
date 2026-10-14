@@ -563,9 +563,13 @@ async function callClaude(prompt, retries = 2, maxTokens = 1000) {
       if (!response.ok || data.error) {
         const msg = typeof data.error === "string" ? data.error : (data.error && data.error.message) || "scan failed";
         const err = new Error(msg);
-        // A missing server key will not fix itself; skip retries and
-        // show the real explanation instead of a generic failure.
-        if (/api key on the server/i.test(msg)) err.fatal = true;
+        // These will not fix themselves inside a 2s retry, and the server
+        // already walked its whole model/provider ladder before returning
+        // them. Retrying re-runs that entire ladder for nothing, turning a
+        // quota blip into a cost-and-latency storm. Stop immediately.
+        if (/api key on the server|exhausted|quota|rate.?limit|billing/i.test(msg)) {
+          err.fatal = true;
+        }
         throw err;
       }
       const text = (data.content || [])
