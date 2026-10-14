@@ -908,89 +908,82 @@ function ValueCard({ cand, watch, onToggle }) {
   );
 }
 
-// ---------- Live watcher (Finnhub WebSocket) ----------
+// ---------- Live watcher (keyless, server-polled Yahoo prices) ----------
 
-const WINDOW_MS = 5 * 60 * 1000;
-const PRICE_MOVE_PCT = 1.5;
-const VOL_SPIKE_X = 4;
+const WINDOW_MS = 5 * 60 * 1000; // rolling window for move detection
+const PRICE_MOVE_PCT = 1.5; // alert when a name moves this much over the window
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
-
-// The Finnhub key comes from the environment now, never hardcoded.
-// It is fine for this key to reach the browser because the WebSocket
-// connects directly from the page, but it must not live in the repo.
-const DEFAULT_KEYS = [import.meta.env.VITE_FINNHUB_KEY].filter(Boolean);
+const POLL_MS = 20000; // how often the browser asks the server for fresh prices
 
 function Watcher({ watch, onExplain, explaining }) {
-  const [key, setKey] = useState("");
-  const [status, setStatus] = useState("off");
+  const [status, setStatus] = useState("off"); // off | live
   const [alerts, setAlerts] = useState([]);
-  const [prices, setPrices] = useState({});
+  const [prices, setPrices] = useState({}); // { TICK: { price, dayPct } }
+  const [marketState, setMarketState] = useState(null);
+  const [noData, setNoData] = useState(false);
   const [notif, setNotif] = useState(
     typeof Notification !== "undefined" && Notification.permission === "granted" ? "on" : "off"
   );
-  const wsRef = useRef(null);
-  const bufRef = useRef({});
+  const pollRef = useRef(null);
+  const bufRef = useRef({}); // { TICK: [{ t, p }] }
   const lastAlertRef = useRef({});
-  const sessionVolRef = useRef({});
+  const watchRef = useRef(watch);
+  watchRef.current = watch;
 
   useEffect(() => {
-    (async () => {
-      try {
-        const k = await storage.get("pulse-finnhub-key");
-        setKey(k && k.value ? k.value : DEFAULT_KEYS[0] || "");
-      } catch (e) {
-        setKey(DEFAULT_KEYS[0] || "");
-      }
-    })();
-    return () => { if (wsRef.current) wsRef.current.close(); };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  async function saveKey(v) {
-    setKey(v);
-    try { await storage.set("pulse-finnhub-key", v); } catch (e) {}
-  }
+  async function poll() {
+    const syms = watchRef.current.map((w) => w.ticker);
+    if (syms.length === 0) return;
+    let data;
+    try {
+      const r = await fetch(`/api/quote?symbols=${encodeURIComponent(syms.join(","))}`);
+      data = await r.json();
+    } catch (e) {
+      setNoData(true);
+      return;
+    }
+    const quotes = (data && data.quotes) || {};
+    if (Object.keys(quotes).length === 0) { setNoData(true); return; }
+    setNoData(false);
+    setMarketState(data.marketState || null);
 
-  function handleTrades(trades) {
     const now = Date.now();
     const priceUpdates = {};
-    for (const t of trades) {
-      const sym = t.s;
+    for (const sym of Object.keys(quotes)) {
+      const q = quotes[sym];
+      if (typeof q.price !== "number") continue;
+      priceUpdates[sym] = { price: q.price, dayPct: typeof q.dayPct === "number" ? q.dayPct : null };
       if (!bufRef.current[sym]) bufRef.current[sym] = [];
-      bufRef.current[sym].push({ t: now, p: t.p, v: t.v || 0 });
-      priceUpdates[sym] = t.p;
+      bufRef.current[sym].push({ t: now, p: q.price });
       bufRef.current[sym] = bufRef.current[sym].filter((x) => now - x.t <= WINDOW_MS);
-      if (!sessionVolRef.current[sym]) sessionVolRef.current[sym] = { total: 0, since: now };
-      sessionVolRef.current[sym].total += t.v || 0;
     }
     setPrices((p) => ({ ...p, ...priceUpdates }));
 
+    // Move detection over the rolling window. Price-only: polling cannot
+    // see per-trade volume the way the old socket did, so we key on the
+    // move itself, which is the signal that matters.
     for (const sym of Object.keys(priceUpdates)) {
       const buf = bufRef.current[sym];
-      if (buf.length < 5) continue;
+      if (buf.length < 3) continue;
       const first = buf[0].p;
       const last = buf[buf.length - 1].p;
+      if (!first) continue;
       const pct = ((last - first) / first) * 100;
-      const winVol = buf.reduce((s, x) => s + x.v, 0);
-      const sess = sessionVolRef.current[sym];
-      const elapsedWindows = Math.max(1, (now - sess.since) / WINDOW_MS);
-      const avgWinVol = sess.total / elapsedWindows;
-      const volX = avgWinVol > 0 ? winVol / avgWinVol : 0;
-
-      const priceTrip = Math.abs(pct) >= PRICE_MOVE_PCT;
-      const volTrip = volX >= VOL_SPIKE_X && elapsedWindows >= 2;
-      if (!priceTrip && !(volTrip && Math.abs(pct) >= 0.5)) continue;
-
+      if (Math.abs(pct) < PRICE_MOVE_PCT) continue;
       const lastA = lastAlertRef.current[sym] || 0;
       if (now - lastA < ALERT_COOLDOWN_MS) continue;
       lastAlertRef.current[sym] = now;
-
-      const desc = `${pct >= 0 ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% in 5 min${volTrip ? `, volume about ${volX.toFixed(0)}x normal` : ""}`;
+      const mins = Math.max(1, Math.round((buf[buf.length - 1].t - buf[0].t) / 60000));
+      const desc = `${pct >= 0 ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% in about ${mins} min`;
       setAlerts((a) => [
         { sym, desc, at: new Date().toLocaleTimeString(), dir: pct >= 0 ? "up" : "down" },
         ...a.slice(0, 9),
       ]);
-      // System notification so alerts reach you even when this tab is
-      // in the background. Works while the page stays open somewhere.
+      // System notification so alerts reach you even when this tab is in
+      // the background. Works while the page stays open somewhere.
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
           new Notification(`${sym} ${desc}`, { body: "Market Pulse live watcher. Open the app and hit Explain this move." });
@@ -999,58 +992,28 @@ function Watcher({ watch, onExplain, explaining }) {
     }
   }
 
-  function connect() {
+  function start() {
     if (watch.length === 0) return;
-    const typed = key.trim();
-    const candidates = [typed, ...DEFAULT_KEYS.filter((k) => k !== typed)].filter(Boolean);
-    attempt(candidates, 0);
+    setStatus("live");
+    bufRef.current = {};
+    setNoData(false);
+    poll();
+    pollRef.current = setInterval(poll, POLL_MS);
   }
 
-  function attempt(cands, i) {
-    if (i >= cands.length) {
-      setStatus("error");
-      return;
-    }
-    setStatus("connecting");
-    let opened = false;
-    try {
-      const ws = new WebSocket(`wss://ws.finnhub.io?token=${cands[i]}`);
-      wsRef.current = ws;
-      ws.onopen = () => {
-        opened = true;
-        setStatus("live");
-        saveKey(cands[i]);
-        watch.forEach((w) => ws.send(JSON.stringify({ type: "subscribe", symbol: w.ticker })));
-      };
-      ws.onmessage = (msg) => {
-        try {
-          const data = JSON.parse(msg.data);
-          if (data.type === "trade" && data.data) handleTrades(data.data);
-        } catch (e) {}
-      };
-      ws.onerror = () => {};
-      ws.onclose = () => {
-        if (!opened) attempt(cands, i + 1);
-        else setStatus("off");
-      };
-    } catch (e) {
-      attempt(cands, i + 1);
-    }
-  }
-
-  function disconnect() {
-    if (wsRef.current) wsRef.current.close();
-    wsRef.current = null;
+  function stop() {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
     setStatus("off");
   }
+
+  const marketClosed = marketState && marketState !== "REGULAR";
 
   return (
     <section className="mb-5 rounded-lg p-4" style={{ background: C.panelSoft, border: `1px solid ${C.line}` }}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs" style={{ color: C.soon, fontFamily: "'IBM Plex Mono', monospace" }}>
-          LIVE WATCHER {status === "live" && <span style={{ color: C.green }}>{"\u25cf"} connected</span>}
-          {status === "connecting" && <span style={{ color: C.gold }}> connecting...</span>}
-          {status === "error" && <span style={{ color: C.red }}> connection failed, check your key</span>}
+          LIVE WATCHER {status === "live" && <span style={{ color: C.green }}>{"\u25cf"} live</span>}
         </p>
         {typeof Notification !== "undefined" && notif !== "on" && (
           <button
@@ -1065,12 +1028,12 @@ function Watcher({ watch, onExplain, explaining }) {
           </button>
         )}
         {status === "live" ? (
-          <button onClick={disconnect} className="text-xs px-2.5 py-1 rounded" style={{ border: `1px solid ${C.line}`, color: C.dim, background: "transparent", cursor: "pointer" }}>
+          <button onClick={stop} className="text-xs px-2.5 py-1 rounded" style={{ border: `1px solid ${C.line}`, color: C.dim, background: "transparent", cursor: "pointer" }}>
             Stop watching
           </button>
         ) : (
           <button
-            onClick={connect}
+            onClick={start}
             disabled={watch.length === 0}
             className="text-xs px-2.5 py-1 rounded"
             style={{
@@ -1086,33 +1049,37 @@ function Watcher({ watch, onExplain, explaining }) {
       </div>
 
       {status !== "live" && (
-        <div className="mt-3">
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => saveKey(e.target.value)}
-            placeholder="Paste your free Finnhub API key"
-            className="w-full px-3 py-2 rounded-md text-sm"
-            style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}
-          />
-          <p className="text-xs mt-2 leading-relaxed" style={{ color: C.dim }}>
-            {key ? "Your key is loaded. Just hit Start." : "Paste your free Finnhub key from finnhub.io. It stays in your browser."} Works during US market hours. {watch.length === 0 ? "Star at least one ticker first." : `Watching ${watch.length} ticker${watch.length > 1 ? "s" : ""} once started.`}
-          </p>
-        </div>
+        <p className="text-xs mt-3 leading-relaxed" style={{ color: C.dim }}>
+          No key needed. It checks live prices for your starred tickers every {Math.round(POLL_MS / 1000)} seconds and alerts you when one moves hard. {watch.length === 0 ? "Star at least one ticker first." : `Ready to watch ${watch.length} ticker${watch.length > 1 ? "s" : ""}.`} Prices move during US market hours; outside them it shows the last close.
+        </p>
       )}
 
       {status === "live" && (
         <div className="mt-3">
           <div className="flex flex-wrap gap-2">
-            {watch.map((w) => (
-              <span key={w.ticker} className="text-xs px-2 py-1 rounded" style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
-                {w.ticker} {prices[w.ticker] ? `$${prices[w.ticker].toFixed(2)}` : "waiting for a trade..."}
-              </span>
-            ))}
+            {watch.map((w) => {
+              const q = prices[w.ticker];
+              return (
+                <span key={w.ticker} className="text-xs px-2 py-1 rounded" style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.text, fontFamily: "'IBM Plex Mono', monospace" }}>
+                  {w.ticker} {q && typeof q.price === "number" ? `$${q.price.toFixed(2)}` : "\u2026"}
+                  {q && typeof q.dayPct === "number" && (
+                    <span style={{ color: q.dayPct >= 0 ? C.green : C.red }}> {q.dayPct >= 0 ? "+" : ""}{q.dayPct.toFixed(2)}%</span>
+                  )}
+                </span>
+              );
+            })}
           </div>
-          {Object.keys(prices).length === 0 && (
+          {noData ? (
+            <p className="text-xs mt-2" style={{ color: C.red, opacity: 0.85 }}>
+              Could not reach the price source just now. It will retry on the next poll.
+            </p>
+          ) : marketClosed ? (
             <p className="text-xs mt-2" style={{ color: C.dim }}>
-              Connected. Prices show up the moment a real trade happens on one of these tickers. During US market hours that is usually seconds; outside market hours it can stay quiet until the next session opens.
+              US market is closed right now, so these are last-session prices. Live moves and alerts resume at the next open.
+            </p>
+          ) : (
+            <p className="text-xs mt-2" style={{ color: C.dim }}>
+              Live. Prices refresh every {Math.round(POLL_MS / 1000)} seconds; you get an alert when a starred name moves {PRICE_MOVE_PCT}% or more within five minutes.
             </p>
           )}
         </div>
