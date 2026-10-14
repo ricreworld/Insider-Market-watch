@@ -48,9 +48,13 @@ const MIN_PRICE = 2.0;
 const MAX_PRICE = 400.0;
 const MAX_RESULTS = 6;
 
-// Cache the whole screen for 30 minutes. Fundamentals barely move
-// intraday, and this keeps us far under Yahoo's rate limits.
-let cache = { at: 0, data: null };
+// Cache the raw UNIVERSE fundamentals for 30 minutes, keyed independently
+// of the user's starred tickers. The old cache only hit when `extra` was
+// empty, so a user with any starred ticker re-fetched all ~55 names (plus
+// the crumb handshake) on every run, hammering Yahoo toward a rate-limit
+// ban. Now the universe is cached once and only the starred extras are
+// fetched live each run.
+let cache = { at: 0, rows: null };
 const TTL_MS = 30 * 60 * 1000;
 
 function num(v) {
@@ -287,23 +291,39 @@ export default async function handler(req, res) {
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z.\-]{1,6}$/.test(s));
 
-  if (extra.length === 0 && cache.data && Date.now() - cache.at < TTL_MS) {
-    res.status(200).json({ ...cache.data, cached: true });
-    return;
+  const starred = new Set(extra);
+
+  // 1. Universe fundamentals: serve from cache when fresh, else fetch once
+  // and cache the raw rows. The crumb handshake is only paid on a miss.
+  let auth = null;
+  let universeRows;
+  let universeCached = false;
+  if (cache.rows && Date.now() - cache.at < TTL_MS) {
+    universeRows = cache.rows;
+    universeCached = true;
+  } else {
+    auth = await getCrumb();
+    universeRows = (await pool(UNIVERSE, 8, (t) => fetchFundamentals(t, auth))).filter(Boolean);
+    if (universeRows.length > 0) cache = { at: Date.now(), rows: universeRows };
   }
 
-  const tickers = Array.from(new Set([...UNIVERSE, ...extra]));
+  // 2. Starred extras not already in the universe: always fetched live so
+  // they reflect the latest, but that is only 1-2 names, not the whole set.
+  const have = new Set(universeRows.map((r) => r.ticker));
+  const toFetch = extra.filter((t) => !have.has(t));
+  let extraRows = [];
+  if (toFetch.length > 0) {
+    if (!auth) auth = await getCrumb(); // only handshake if we must fetch
+    extraRows = (await pool(toFetch, 8, (t) => fetchFundamentals(t, auth))).filter(Boolean);
+  }
 
-  const auth = await getCrumb();
-
-  // One fundamentals pull per name, concurrency-capped.
-  const rows = (await pool(tickers, 8, (t) => fetchFundamentals(t, auth))).filter(Boolean);
+  const rows = [...universeRows, ...extraRows];
   const fetched = rows.length;
 
   if (fetched === 0) {
     const data = {
       candidates: [],
-      universeSize: tickers.length,
+      universeSize: UNIVERSE.length,
       fetched: 0,
       asOf: new Date().toISOString(),
       note: auth
@@ -328,11 +348,6 @@ export default async function handler(req, res) {
   const medPEBy = medianBy("pe");
   const medPBBy = medianBy("priceToBook");
   const medPSBy = medianBy("priceToSales");
-
-  // A starred ticker is one the user deliberately asked for. It always
-  // shows, with its real fundamentals and score, even if it is too small
-  // or too pricey for the default gates, and it is never cut by the top-N.
-  const starred = new Set(extra);
 
   const scored = rows
     .filter((s) => starred.has(s.ticker) || (s.price >= MIN_PRICE && s.price <= MAX_PRICE && s.marketCap >= MIN_MARKET_CAP))
@@ -370,8 +385,9 @@ export default async function handler(req, res) {
   const missing = extra.filter((t) => !candidates.some((c) => c.ticker === t));
   const data = {
     candidates,
-    universeSize: tickers.length,
+    universeSize: UNIVERSE.length,
     fetched,
+    cached: universeCached,
     asOf: new Date().toISOString(),
     note: candidates.length === 0
       ? `Screened ${fetched} names; none cleared the size and price gates today.`
@@ -382,6 +398,6 @@ export default async function handler(req, res) {
       : "",
   };
 
-  if (extra.length === 0) cache = { at: Date.now(), data };
+  // The universe rows are already cached above; nothing else to store.
   res.status(200).json(data);
 }
