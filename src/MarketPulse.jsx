@@ -524,12 +524,22 @@ function salvageArray(clean, key) {
 
 function extractJson(text) {
   const clean = text.replace(/```json|```/g, "").trim();
-  const start = clean.indexOf("{");
-  if (start === -1) throw new Error("no json");
-  for (let end = clean.lastIndexOf("}"); end > start; end = clean.lastIndexOf("}", end - 1)) {
-    try {
-      return JSON.parse(clean.slice(start, end + 1));
-    } catch (e) {}
+  // Try EVERY "{" as a possible start, not just the first. Grounded search
+  // output often puts a stray brace in its preamble (a citation, a "{note}"
+  // aside) before the real JSON; anchoring on the first brace alone parses
+  // from the wrong offset and throws. For each start we walk "}" back from
+  // the end and return the first slice that parses, which favors the
+  // largest (outermost) valid object.
+  const starts = [];
+  for (let i = 0; i < clean.length; i++) {
+    if (clean[i] === "{") starts.push(i);
+  }
+  for (const start of starts) {
+    for (let end = clean.lastIndexOf("}"); end > start; end = clean.lastIndexOf("}", end - 1)) {
+      try {
+        return JSON.parse(clean.slice(start, end + 1));
+      } catch (e) {}
+    }
   }
   // Response got cut off mid-write. Rescue every complete item instead of failing.
   const events = salvageArray(clean, "events");
